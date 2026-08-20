@@ -1,0 +1,16 @@
+# GUI + repair runtime
+PySide6>=6.6
+pypdf>=4.0
+pymupdf>=1.24
+
+# Engines (install explicitly; versions move quickly)
+# docling
+# mineru
+
+# Common runtime deps often pulled by engines
+# torch
+# transformers
+# huggingface_hub
+
+# Dev / CI (optional)
+# pytest>=7.0

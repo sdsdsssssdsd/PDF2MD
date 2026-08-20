@@ -1,0 +1,48 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "pdf2md"
+version = "0.1.0a0"
+description = "Windows desktop GUI for academic PDF to Markdown (Docling / MinerU) with conservative post-conversion repair"
+readme = "README.md"
+requires-python = ">=3.10"
+license = { text = "Apache-2.0" }
+authors = [
+  { name = "PDF2MD Contributors" }
+]
+keywords = ["pdf", "markdown", "docling", "mineru", "pyside6", "academic", "repair"]
+classifiers = [
+  "Development Status :: 3 - Alpha",
+  "Environment :: Win32 (MS Windows)",
+  "Intended Audience :: Science/Research",
+  "License :: OSI Approved :: Apache Software License",
+  "Operating System :: Microsoft :: Windows",
+  "Programming Language :: Python :: 3",
+  "Programming Language :: Python :: 3.10",
+  "Programming Language :: Python :: 3.11",
+  "Programming Language :: Python :: 3.12",
+  "Topic :: Scientific/Engineering",
+  "Topic :: Text Processing",
+]
+dependencies = [
+  "PySide6>=6.6",
+  "pypdf>=4.0",
+  "pymupdf>=1.24",
+]
+
+[project.optional-dependencies]
+docling = ["docling"]
+# MinerU install varies by platform; follow upstream docs.
+dev = ["pytest>=7.0", "ruff"]
+
+[project.scripts]
+pdf2md-gui = "app.main:main"
+
+[tool.setuptools.packages.find]
+include = ["app*"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["."]

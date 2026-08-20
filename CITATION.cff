@@ -1,0 +1,18 @@
+cff-version: 1.2.0
+title: PDF2MD
+message: If you use this software, please cite it as below.
+type: software
+authors:
+  - name: PDF2MD Contributors
+license: Apache-2.0
+version: 0.1.0-alpha
+date-released: "2026-08-21"
+abstract: >-
+  Windows desktop GUI for converting academic PDFs to Markdown using Docling
+  and MinerU, with a conservative post-conversion RepairPipeline.
+keywords:
+  - pdf
+  - markdown
+  - docling
+  - mineru
+  - pyside6

@@ -1,0 +1,68 @@
+# Byte-compiled / cache
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+*.egg-info/
+.eggs/
+dist/
+build/
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
+.coverage
+htmlcov/
+
+# Virtual environments
+.venv/
+.venv-*/
+venv/
+env/
+
+# Local caches & models (large)
+.cache/
+*.safetensors
+*.pth
+*.pt
+*.onnx
+*.bin
+*.gguf
+
+# Runtime data
+input/*
+!input/.gitkeep
+output/*
+!output/.gitkeep
+logs/*
+!logs/.gitkeep
+icons/*
+!icons/.gitkeep
+
+# User documents that must never be committed
+*.pdf
+
+# OS / IDE
+.DS_Store
+Thumbs.db
+Desktop.ini
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# Secrets / local config
+.env
+.env.*
+*.local
+mineru.json
+*.key
+*.pem
+credentials.json
+
+# Packaging / wheels
+*.whl
+
+# Local demo conversion dumps (keep docs/images/*.png)
+docs/_demo*/
+

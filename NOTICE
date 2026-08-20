@@ -1,0 +1,54 @@
+PDF2MD
+Copyright 2026 PDF2MD Contributors
+
+This product is licensed under the Apache License, Version 2.0.
+See the LICENSE file for the full license text.
+
+---------------------------------------------------------------------------
+Third-party software and services
+---------------------------------------------------------------------------
+
+This project integrates with / depends on the following (not redistributed
+in this repository unless otherwise noted):
+
+1) Docling
+   - Project: https://github.com/docling-project/docling
+   - Code license: MIT
+   - Note: ML model checkpoints used at runtime have their own licenses
+     (often Apache-2.0 / CDLA-Permissive); see upstream model cards.
+
+2) MinerU (OpenDataLab)
+   - Project: https://github.com/opendatalab/MinerU
+   - License: MinerU Open Source License (Apache-2.0 based, with additional
+     conditions for very large commercial deployments and online-service
+     attribution). See:
+     https://github.com/opendatalab/MinerU/blob/master/LICENSE.md
+
+3) Qt for Python / PySide6
+   - Project: https://doc.qt.io/qtforpython-6/
+   - License: LGPL / GPL / commercial (Qt Company). When redistributing
+     binaries that link PySide6, comply with Qt licensing terms.
+
+4) PyMuPDF (pymupdf)
+   - Project: https://github.com/pymupdf/PyMuPDF
+   - License: AGPL-3.0 OR commercial dual-license from Artifex
+   - Used optionally for PDF geometry / bold recovery in the repair path.
+     Review Artifex terms if you redistribute a proprietary build that
+     bundles PyMuPDF.
+
+5) PyPDF (pypdf)
+   - Project: https://github.com/py-pdf/pypdf
+   - License: BSD-3-Clause
+
+6) PyTorch / Hugging Face Hub / Transformers and related model weights
+   - Licenses vary by package and by model checkpoint.
+   - Model weights downloaded at runtime (e.g. layout / OCR / table models)
+     are subject to their respective model card licenses and are NOT part
+     of this repository.
+
+7) Optional Hugging Face mirrors (e.g. hf-mirror.com) or ModelScope
+   - May be configured by the user via HF_ENDPOINT / MINERU_MODEL_SOURCE.
+   - Not affiliated with this project; not enabled by default.
+
+Users are responsible for complying with all third-party licenses and
+for obtaining any rights needed for the documents they convert.
