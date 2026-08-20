@@ -57,15 +57,29 @@ Desktop.ini
 # Secrets / local config
 .env
 .env.*
+!.env.example
 *.local
 mineru.json
 *.key
 *.pem
+*.p12
+*.pfx
 credentials.json
+
+# Logs (anywhere)
+*.log
 
 # Packaging / wheels
 *.whl
 
 # Local demo conversion dumps (keep docs/images/*.png)
 docs/_demo*/
+outputs/
+
+# Local-only privacy / security audit artifacts (never publish)
+PRIVACY_AUDIT.md
+PRIVACY_AUDIT*.md
+*安全审查*.md
+*隐私审计*.md
+*audit*report*.md
 
