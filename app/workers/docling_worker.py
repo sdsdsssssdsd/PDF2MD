@@ -28,11 +28,14 @@ class ConversionWorker(QThread):
         output_root: Path,
         per_folder: bool,
         ocr_mode: str,
-        keep_images: bool,
-        keep_tables: bool,
-        keep_formulas: bool,
+        keep_images: bool = True,
+        keep_tables: bool = True,
+        keep_formulas: bool = True,
         images_scale: float = 2.0,
         image_path_mode: str = "relative",
+        export_md: bool = True,
+        export_raw_md: bool = False,
+        export_repair_json: bool = False,
         parent=None,
     ) -> None:
         super().__init__(parent)
@@ -40,11 +43,16 @@ class ConversionWorker(QThread):
         self._output_root = output_root
         self._per_folder = per_folder
         self._ocr_mode = ocr_mode
-        self._keep_images = keep_images
+        self._keep_images = True  # 图片为必要组件，始终导出
         self._keep_tables = keep_tables
         self._keep_formulas = keep_formulas
         self._images_scale = float(images_scale)
-        self._image_path_mode = image_path_mode if image_path_mode in ("relative", "absolute") else "relative"
+        self._image_path_mode = (
+            image_path_mode if image_path_mode in ("relative", "absolute") else "relative"
+        )
+        self._export_md = bool(export_md)
+        self._export_raw_md = bool(export_raw_md)
+        self._export_repair_json = bool(export_repair_json)
         self._cancel = False
         self._mutex = QMutex()
 
@@ -60,11 +68,8 @@ class ConversionWorker(QThread):
         return v
 
     def _parse(self, task: ConvertTask, out_dir: Path, progress) -> ConversionResult:
-        engine = task.engine
-        if engine == EngineChoice.AUTO.value:
-            engine = EngineChoice.DOCLING.value
-
-        if engine == EngineChoice.MINERU.value:
+        eng = task.engine
+        if eng == EngineChoice.MINERU.value:
             return mineru_engine.convert_pdf(
                 task.pdf_path,
                 out_dir,
@@ -73,7 +78,19 @@ class ConversionWorker(QThread):
                 keep_formulas=self._keep_formulas,
                 progress=progress,
             )
-
+        if eng == EngineChoice.DOCLING.value:
+            return docling_engine.convert_pdf(
+                task.pdf_path,
+                out_dir,
+                keep_images=self._keep_images,
+                keep_tables=self._keep_tables,
+                keep_formulas=self._keep_formulas,
+                ocr_mode=self._ocr_mode,
+                images_scale=self._images_scale,
+                image_path_mode=self._image_path_mode,
+                progress=progress,
+            )
+        # 自动：Docling 优先，失败则 MinerU
         try:
             return docling_engine.convert_pdf(
                 task.pdf_path,
@@ -87,17 +104,15 @@ class ConversionWorker(QThread):
                 progress=progress,
             )
         except Exception as e:
-            if task.engine == EngineChoice.AUTO.value:
-                progress(f"Docling 失败，改用 MinerU：{e}")
-                return mineru_engine.convert_pdf(
-                    task.pdf_path,
-                    out_dir,
-                    ocr_mode=self._ocr_mode,
-                    keep_tables=self._keep_tables,
-                    keep_formulas=self._keep_formulas,
-                    progress=progress,
-                )
-            raise
+            progress(f"Docling 失败，切换 MinerU：{e}")
+            return mineru_engine.convert_pdf(
+                task.pdf_path,
+                out_dir,
+                ocr_mode=self._ocr_mode,
+                keep_tables=self._keep_tables,
+                keep_formulas=self._keep_formulas,
+                progress=progress,
+            )
 
     def run(self) -> None:
         log = get_logger()
@@ -107,9 +122,9 @@ class ConversionWorker(QThread):
                 mode="safe",
                 keep_formulas=self._keep_formulas,
                 fix_bold=True,
-                write_raw_md=True,
-                write_repair_json=True,
-                # Phase 0 误伤可接受后开启；O-024 验证：无 prose/嵌套 $
+                write_raw_md=self._export_raw_md,
+                write_repair_json=self._export_repair_json,
+                write_final_md=self._export_md,
                 use_geometry=True,
             )
         )
@@ -143,7 +158,6 @@ class ConversionWorker(QThread):
                     out_dir=out_dir,
                     progress=progress,
                 )
-                # 报告里补上 parser
                 if repaired.report_path and repaired.report_path.exists():
                     try:
                         import json
@@ -157,14 +171,14 @@ class ConversionWorker(QThread):
                     except Exception:
                         pass
 
-                md = repaired.markdown_path
+                md_str = str(repaired.markdown_path) if self._export_md and repaired.markdown_path.exists() else ""
                 elapsed = time.time() - t0
-                write_task_log(out_dir, f"OK {md}")
+                write_task_log(out_dir, f"OK components md={self._export_md} raw={self._export_raw_md} json={self._export_repair_json}")
                 self.task_finished.emit(
-                    task.id, True, str(md), str(out_dir), "", elapsed
+                    task.id, True, md_str, str(out_dir), "", elapsed
                 )
                 self.log_line.emit(f"完成 {task.name}")
-                log.info("完成 %s -> %s", task.name, md)
+                log.info("完成 %s -> %s", task.name, out_dir)
             except Exception as e:
                 elapsed = time.time() - t0
                 err = f"{e}\n{traceback.format_exc()}"

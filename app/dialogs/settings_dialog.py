@@ -43,7 +43,10 @@ def load_defaults() -> dict:
         "notify": s.value("notify", True, type=bool),
         "auto_open": s.value("auto_open", False, type=bool),
         "theme": s.value("theme", "跟随系统"),
-        "keep_images": s.value("keep_images", True, type=bool),
+        "keep_images": True,  # 始终导出图片
+        "export_md": s.value("export_md", True, type=bool),
+        "export_raw_md": s.value("export_raw_md", False, type=bool),
+        "export_repair_json": s.value("export_repair_json", False, type=bool),
         "keep_tables": s.value("keep_tables", True, type=bool),
         "keep_formulas": s.value("keep_formulas", True, type=bool),
         "keep_refs": s.value("keep_refs", True, type=bool),

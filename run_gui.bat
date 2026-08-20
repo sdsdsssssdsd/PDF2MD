@@ -1,5 +1,8 @@
 @echo off
 cd /d "%~dp0"
+REM Refresh PDF2MD.lnk beside this folder (custom desktop cover icon).
+powershell -NoProfile -ExecutionPolicy Bypass -File "%~dp0scripts\ensure_shortcut.ps1" -Root "%~dp0." -TargetBat "%~f0" >nul 2>nul
+
 REM Prefer the Python that is already on PATH / active venv.
 where pythonw >nul 2>nul
 if %ERRORLEVEL%==0 (

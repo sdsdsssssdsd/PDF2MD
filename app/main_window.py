@@ -103,16 +103,34 @@ class MainWindow(QMainWindow):
         eng_row.addStretch(1)
         root.addLayout(eng_row)
 
-        # 选项
-        opt = QHBoxLayout()
-        self.cb_md = QCheckBox("Markdown")
+        # 导出组件（每篇论文）
+        export_row = QHBoxLayout()
+        export_row.addWidget(QLabel("导出组件："))
+        self.cb_images = QCheckBox("图片")
+        self.cb_images.setChecked(True)
+        self.cb_images.setEnabled(False)
+        self.cb_images.setToolTip("图片为必要组件，始终导出，不可取消")
+        self.cb_md = QCheckBox("Markdown（.md）")
         self.cb_md.setChecked(True)
-        self.cb_md.setEnabled(False)
-        self.cb_images = QCheckBox("保留图片")
-        self.cb_tables = QCheckBox("识别表格")
-        self.cb_formulas = QCheckBox("识别数学公式")
-        self.cb_refs = QCheckBox("保留参考文献")
-        for c in (self.cb_md, self.cb_images, self.cb_tables, self.cb_formulas, self.cb_refs):
+        self.cb_md.setToolTip("最终 Markdown 正文（默认导出）")
+        self.cb_raw_md = QCheckBox("原始解析（.raw.md）")
+        self.cb_raw_md.setChecked(False)
+        self.cb_raw_md.setToolTip("保留解析器原始 Markdown，便于对照修复效果")
+        self.cb_repair_json = QCheckBox("修复报告（.repair.json）")
+        self.cb_repair_json.setChecked(False)
+        self.cb_repair_json.setToolTip("保留 RepairPipeline 质量/修复报告")
+        for c in (self.cb_images, self.cb_md, self.cb_raw_md, self.cb_repair_json):
+            export_row.addWidget(c)
+        export_row.addStretch(1)
+        root.addLayout(export_row)
+
+        # 识别选项
+        opt = QHBoxLayout()
+        opt.addWidget(QLabel("识别："))
+        self.cb_tables = QCheckBox("表格")
+        self.cb_formulas = QCheckBox("数学公式")
+        self.cb_refs = QCheckBox("参考文献")
+        for c in (self.cb_tables, self.cb_formulas, self.cb_refs):
             c.setChecked(True)
             opt.addWidget(c)
         opt.addStretch(1)
@@ -147,8 +165,6 @@ class MainWindow(QMainWindow):
             path_row.addWidget(b)
         path_row.addStretch(1)
         root.addLayout(path_row)
-
-        self.cb_images.toggled.connect(self._on_keep_images_toggled)
 
         ocr_row = QHBoxLayout()
         ocr_row.addWidget(QLabel("OCR："))
@@ -245,7 +261,11 @@ class MainWindow(QMainWindow):
             self.rb_ocr_off.setChecked(True)
         else:
             self.rb_ocr_auto.setChecked(True)
-        self.cb_images.setChecked(bool(cfg["keep_images"]))
+        # 图片始终导出
+        self.cb_images.setChecked(True)
+        self.cb_md.setChecked(bool(cfg.get("export_md", True)))
+        self.cb_raw_md.setChecked(bool(cfg.get("export_raw_md", False)))
+        self.cb_repair_json.setChecked(bool(cfg.get("export_repair_json", False)))
         self.cb_tables.setChecked(bool(cfg["keep_tables"]))
         self.cb_formulas.setChecked(bool(cfg["keep_formulas"]))
         self.cb_refs.setChecked(bool(cfg["keep_refs"]))
@@ -261,17 +281,6 @@ class MainWindow(QMainWindow):
             self.rb_path_abs.setChecked(True)
         else:
             self.rb_path_rel.setChecked(True)
-        self._on_keep_images_toggled(self.cb_images.isChecked())
-
-    def _on_keep_images_toggled(self, checked: bool) -> None:
-        for b in (
-            self.rb_img_fast,
-            self.rb_img_std,
-            self.rb_img_hq,
-            self.rb_path_rel,
-            self.rb_path_abs,
-        ):
-            b.setEnabled(checked)
 
     def _images_scale(self) -> float:
         if self.rb_img_fast.isChecked():
@@ -400,11 +409,14 @@ class MainWindow(QMainWindow):
             output_root=out_root,
             per_folder=self.cb_per_folder.isChecked(),
             ocr_mode=self._ocr_mode(),
-            keep_images=self.cb_images.isChecked(),
+            keep_images=True,  # 图片为必要组件
             keep_tables=self.cb_tables.isChecked(),
             keep_formulas=self.cb_formulas.isChecked(),
             images_scale=self._images_scale(),
             image_path_mode=self._image_path_mode(),
+            export_md=self.cb_md.isChecked(),
+            export_raw_md=self.cb_raw_md.isChecked(),
+            export_repair_json=self.cb_repair_json.isChecked(),
         )
         self._worker.task_status.connect(self._on_task_status)
         self._worker.task_finished.connect(self._on_task_finished)
@@ -597,7 +609,10 @@ class MainWindow(QMainWindow):
         s.setValue("output_dir", self.output_edit.text().strip())
         s.setValue("per_folder", self.cb_per_folder.isChecked())
         s.setValue("ocr_mode", self._ocr_mode())
-        s.setValue("keep_images", self.cb_images.isChecked())
+        s.setValue("keep_images", True)
+        s.setValue("export_md", self.cb_md.isChecked())
+        s.setValue("export_raw_md", self.cb_raw_md.isChecked())
+        s.setValue("export_repair_json", self.cb_repair_json.isChecked())
         s.setValue("keep_tables", self.cb_tables.isChecked())
         s.setValue("keep_formulas", self.cb_formulas.isChecked())
         s.setValue("keep_refs", self.cb_refs.isChecked())

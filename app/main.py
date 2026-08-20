@@ -17,10 +17,11 @@ os.environ.setdefault("TRANSFORMERS_NO_TF", "1")
 os.environ.setdefault("USE_TF", "0")
 os.environ.setdefault("USE_TORCH", "1")
 
+from PySide6.QtGui import QIcon
 from PySide6.QtWidgets import QApplication
 
 from app.main_window import MainWindow
-from app.utils.paths import ensure_dirs
+from app.utils.paths import ICONS_DIR, ensure_dirs
 
 
 def main() -> int:
@@ -28,7 +29,12 @@ def main() -> int:
     app = QApplication(sys.argv)
     app.setApplicationName("PDF2MD")
     app.setOrganizationName("PDF2MD")
+    icon_path = ICONS_DIR / "pdf2md.ico"
+    if icon_path.is_file():
+        app.setWindowIcon(QIcon(str(icon_path)))
     win = MainWindow()
+    if icon_path.is_file():
+        win.setWindowIcon(QIcon(str(icon_path)))
     win.show()
     return app.exec()
 

@@ -36,8 +36,9 @@ class RepairConfig:
     mode: str = "safe"
     keep_formulas: bool = True
     fix_bold: bool = True
-    write_raw_md: bool = True
-    write_repair_json: bool = True
+    write_raw_md: bool = False  # 默认不保留 .raw.md
+    write_repair_json: bool = False  # 默认不写 .repair.json
+    write_final_md: bool = True  # 默认导出最终 .md
     use_geometry: bool = True  # O-024：safe 后保守几何；可关
     use_vision: bool = False
     use_reasoning: bool = False

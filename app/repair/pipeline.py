@@ -45,9 +45,42 @@ class RepairPipeline:
         if not cfg.enabled:
             final_md.write_text(raw_text, encoding="utf-8")
             methods["keep"] = len(issues)
+            kept_raw: Path | None = raw_markdown_path
+            if not cfg.write_raw_md:
+                try:
+                    if raw_markdown_path.exists() and raw_markdown_path.name.endswith(".raw.md"):
+                        raw_markdown_path.unlink()
+                    kept_raw = None
+                except OSError:
+                    pass
+            if not cfg.write_final_md:
+                try:
+                    if final_md.exists():
+                        final_md.unlink()
+                except OSError:
+                    pass
+            report_path = None
+            if cfg.write_repair_json:
+                report_path = out_dir / f"{stem}.repair.json"
+                report_path.write_text(
+                    json.dumps(
+                        {
+                            "parser": None,
+                            "quality_before": round(before, 4),
+                            "quality_after": round(before, 4),
+                            "issues": {"detected": len(issues), "repaired": 0, "unresolved": len(issues)},
+                            "methods": methods,
+                            "mode": "disabled",
+                        },
+                        ensure_ascii=False,
+                        indent=2,
+                    ),
+                    encoding="utf-8",
+                )
             return RepairResult(
                 markdown_path=final_md,
-                raw_markdown_path=raw_markdown_path,
+                raw_markdown_path=kept_raw,
+                report_path=report_path,
                 issues_detected=len(issues),
                 issues_repaired=0,
                 methods=methods,
@@ -139,6 +172,25 @@ class RepairPipeline:
 
         final_md.write_text(text, encoding="utf-8")
 
+        # 按导出组件保留/删除产物（解析阶段总会生成 .raw.md 供修复）
+        kept_raw = raw_markdown_path
+        if not cfg.write_raw_md:
+            try:
+                if raw_markdown_path.exists() and raw_markdown_path.name.endswith(".raw.md"):
+                    raw_markdown_path.unlink()
+                    emit(f"已按设置删除 {raw_markdown_path.name}")
+                kept_raw = None
+            except OSError:
+                pass
+
+        if not cfg.write_final_md:
+            try:
+                if final_md.exists():
+                    final_md.unlink()
+                    emit(f"已按设置删除 {final_md.name}")
+            except OSError:
+                pass
+
         after_issues = analyze_markdown(text)
         after = 1.0 - risk_score(after_issues)
         warnings = validate_markdown(text)
@@ -178,12 +230,12 @@ class RepairPipeline:
 
         return RepairResult(
             markdown_path=final_md,
-            raw_markdown_path=raw_markdown_path,
+            raw_markdown_path=kept_raw if cfg.write_raw_md else None,
             report_path=report_path,
             issues_detected=len(issues),
             issues_repaired=repaired,
             methods=methods,
             quality_before=before,
             quality_after=after,
-            metadata={"validator_warnings": warnings},
+            metadata={"validator_warnings": warnings, "export_md": cfg.write_final_md},
         )

@@ -1,5 +1,7 @@
 # PDF2MD
 
+![PDF2MD product](docs/images/product-promo.png)
+
 Windows desktop tool for converting **academic PDFs → Markdown** using
 **Docling** / **MinerU**, plus a conservative **RepairPipeline** after parsing.
 
@@ -74,7 +76,8 @@ pip install docling
 python run_gui.py
 ```
 
-Or double-click `run_gui.bat`.
+Or double-click `run_gui.bat` (it also refreshes `PDF2MD.lnk` with the
+desktop cover icon — pin or copy that shortcut for a branded launcher).
 
 China network tip (optional — **not** set by default):
 

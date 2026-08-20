@@ -38,6 +38,8 @@ logs/*
 !logs/.gitkeep
 icons/*
 !icons/.gitkeep
+!icons/pdf2md.ico
+!icons/pdf2md-cover.png
 
 # User documents that must never be committed
 *.pdf
@@ -50,6 +52,7 @@ Desktop.ini
 .vscode/
 *.swp
 *.swo
+*.lnk
 
 # Secrets / local config
 .env

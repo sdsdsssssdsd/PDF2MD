@@ -1,5 +1,7 @@
 # PDF2MD
 
+![PDF2MD 产品宣传](docs/images/product-promo.png)
+
 Windows 桌面端工具：将**学术 PDF**转为 Markdown，引擎为 **Docling** / **MinerU**，解析后经保守的 **RepairPipeline** 修复。
 
 > **状态：Alpha（v0.1.0-alpha）**  
@@ -45,6 +47,8 @@ pip install -r requirements.txt
 pip install docling
 python run_gui.py
 ```
+
+也可双击 `run_gui.bat`；会顺带生成带桌面封面图标的 `PDF2MD.lnk`，可固定到任务栏或复制到桌面。
 
 国内网络（**可选**，默认不启用）：
 
