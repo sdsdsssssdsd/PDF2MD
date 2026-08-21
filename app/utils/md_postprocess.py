@@ -470,6 +470,42 @@ def _is_md_table_line(line: str) -> bool:
     return s.count("|") >= 2
 
 
+def _is_md_image_line(line: str) -> bool:
+    """Markdown 图片引用行（整行）。"""
+    return bool(re.match(r"^\s*!\[[^\]]*\]\([^)]+\)\s*$", line))
+
+
+def ensure_figure_table_separation(md: str) -> str:
+    """
+    硬规则：表格行与图片引用之间必须至少空一行。
+
+    否则 CommonMark/多数渲染器会把 `![...](...)` 吃进表格单元格，
+    导致图片「进入表格内」。图片前后的表格都要隔开。
+    """
+    if not md:
+        return md
+    lines = md.splitlines(keepends=True)
+    out: list[str] = []
+
+    def _core(s: str) -> str:
+        return s[:-1] if s.endswith("\n") else s
+
+    for line in lines:
+        core = _core(line)
+        if out:
+            prev = _core(out[-1])
+            # 跳过已有空行
+            if prev.strip() != "":
+                need_gap = (_is_md_table_line(prev) and _is_md_image_line(core)) or (
+                    _is_md_image_line(prev) and _is_md_table_line(core)
+                )
+                # 图注行紧跟图片是允许的；但表格紧贴图片不行
+                if need_gap:
+                    out.append("\n")
+        out.append(line)
+    return "".join(out)
+
+
 def _repair_table_line_math(line: str) -> str:
     """表格行：只粘合小数、规范化 mean±std，绝不跨 `|` 包 $。"""
     # 分隔行不动
@@ -672,4 +708,6 @@ def postprocess_markdown(
         text = convert_inline_unicode_math(text, mode=mode)
     if fix_bold and pdf_path is not None and Path(pdf_path).exists():
         text = apply_bold_phrases(text, extract_bold_phrases(Path(pdf_path)))
+    # 永远保证：表格与图片之间空一行（防图片并入表格）
+    text = ensure_figure_table_separation(text)
     return text

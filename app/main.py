@@ -1,8 +1,10 @@
 """GUI 入口。"""
 from __future__ import annotations
 
+import logging
 import os
 import sys
+import warnings
 from pathlib import Path
 
 # 保证项目根目录在 sys.path
@@ -16,6 +18,31 @@ os.environ.setdefault("HF_HUB_DISABLE_SYMLINKS_WARNING", "1")
 os.environ.setdefault("TRANSFORMERS_NO_TF", "1")
 os.environ.setdefault("USE_TF", "0")
 os.environ.setdefault("USE_TORCH", "1")
+
+# 抑制 transformers 关于 use_fast 的提示（加载模型时会刷屏，易被误认为卡死）
+warnings.filterwarnings(
+    "ignore",
+    message=r".*use_fast.*slow image processor.*",
+    category=UserWarning,
+)
+warnings.filterwarnings(
+    "ignore",
+    message=r".*slow processor was saved with this model.*",
+)
+
+
+class _DropUseFastNoise(logging.Filter):
+    def filter(self, record: logging.LogRecord) -> bool:  # noqa: A003
+        msg = record.getMessage()
+        if "use_fast" in msg and "slow" in msg and "processor" in msg:
+            return False
+        return True
+
+
+logging.getLogger("transformers").addFilter(_DropUseFastNoise())
+logging.getLogger("transformers.models.auto.image_processing_auto").addFilter(
+    _DropUseFastNoise()
+)
 
 from PySide6.QtGui import QIcon
 from PySide6.QtWidgets import QApplication

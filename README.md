@@ -37,8 +37,14 @@ Same academic excerpt — **PDF before conversion** vs **Markdown after conversi
 - Formula recognition hooks (Docling enrichment / MinerU `-f`)
 - Parser writes `*.raw.md` only; **RepairPipeline** produces final `*.md`
   (+ optional `*.repair.json`)
+- **AssetPipeline**: semantic figure naming `image_{N}_{stem}.png`, optional
+  `images/manifest.json`; Markdown references composite figures only
+- Export components (per paper): images always on; optional `.md` / `.raw.md` /
+  `.repair.json` / `conversion.log` / `manifest.json`
 - Safe Unicode / decimal cleanup; conservative PDF geometry repairs
   (e.g. detached subscripts); table rows protected from `$` breaking `|`
+- Blank line enforced between Markdown tables and image links (avoids images
+  being absorbed into tables)
 - Settings persisted via `QSettings`
 - Optional batch helper: `scripts/convert.ps1 -OutputDir ...`
 

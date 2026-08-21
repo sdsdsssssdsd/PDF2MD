@@ -47,6 +47,8 @@ def load_defaults() -> dict:
         "export_md": s.value("export_md", True, type=bool),
         "export_raw_md": s.value("export_raw_md", False, type=bool),
         "export_repair_json": s.value("export_repair_json", False, type=bool),
+        "export_conversion_log": s.value("export_conversion_log", False, type=bool),
+        "export_manifest": s.value("export_manifest", False, type=bool),
         "keep_tables": s.value("keep_tables", True, type=bool),
         "keep_formulas": s.value("keep_formulas", True, type=bool),
         "keep_refs": s.value("keep_refs", True, type=bool),

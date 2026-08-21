@@ -27,7 +27,10 @@ Windows 桌面端工具：将**学术 PDF**转为 Markdown，引擎为 **Docling
 - Docling（默认）/ MinerU / 自动
 - 可指定**导出目录**（可选每篇独立子文件夹）
 - 解析只写 `*.raw.md`，再经 RepairPipeline 得到 `*.md`（可选 `*.repair.json`）
+- **AssetPipeline**：语义命名 `image_{N}_{stem}.png`，可选 `manifest.json`；正文只引用主图
+- 导出组件可选：图片必选；`.md` / `.raw.md` / `.repair.json` / `conversion.log` / `manifest.json`
 - 安全 Unicode / 小数清理；保守 PDF 几何修复；表格行避免 `$` 拆坏 `|`
+- 表格与图片之间强制空行，防止图片并入表格
 
 ## 路线图（尚未实现）
 

@@ -1,4 +1,4 @@
-"""后台转换 Worker（QThread）：Parser → RepairPipeline → 最终 Markdown。"""
+"""后台转换 Worker（QThread）：Parser → AssetPipeline → RepairPipeline → 最终 Markdown。"""
 from __future__ import annotations
 
 import time
@@ -7,6 +7,7 @@ from pathlib import Path
 
 from PySide6.QtCore import QMutex, QThread, Signal
 
+from app.assets import AssetConfig, AssetPipeline
 from app.engines import docling_engine, mineru_engine
 from app.engines.base import ConversionResult
 from app.repair import RepairConfig, RepairPipeline
@@ -36,6 +37,8 @@ class ConversionWorker(QThread):
         export_md: bool = True,
         export_raw_md: bool = False,
         export_repair_json: bool = False,
+        export_conversion_log: bool = False,
+        export_manifest: bool = False,
         parent=None,
     ) -> None:
         super().__init__(parent)
@@ -53,6 +56,8 @@ class ConversionWorker(QThread):
         self._export_md = bool(export_md)
         self._export_raw_md = bool(export_raw_md)
         self._export_repair_json = bool(export_repair_json)
+        self._export_conversion_log = bool(export_conversion_log)
+        self._export_manifest = bool(export_manifest)
         self._cancel = False
         self._mutex = QMutex()
 
@@ -114,6 +119,26 @@ class ConversionWorker(QThread):
                 progress=progress,
             )
 
+    def _cleanup_optional_exports(self, out_dir: Path, images_dir: Path | None) -> None:
+        """按导出组件删除过程中产生的可选文件。"""
+        if not self._export_conversion_log:
+            log_path = out_dir / "conversion.log"
+            try:
+                if log_path.is_file():
+                    log_path.unlink()
+            except OSError:
+                pass
+        if not self._export_manifest:
+            for base in (images_dir, out_dir / "images"):
+                if base is None:
+                    continue
+                man = Path(base) / "manifest.json"
+                try:
+                    if man.is_file():
+                        man.unlink()
+                except OSError:
+                    pass
+
     def run(self) -> None:
         log = get_logger()
         repair = RepairPipeline(
@@ -152,6 +177,28 @@ class ConversionWorker(QThread):
                 parsed = self._parse(task, out_dir, progress)
                 progress(f"解析器：{parsed.parser} → {parsed.markdown_path.name}")
 
+                # Figure AssetPipeline：语义命名 / caption / manifest（在 Repair 之前）
+                images_dir = parsed.artifacts_dir or (out_dir / "images")
+                if not images_dir.exists():
+                    images_dir = out_dir / "images"
+                asset_result = AssetPipeline(
+                    AssetConfig(
+                        enabled=True,
+                        enable_subfigure_split=True,  # 无 Vision 时 skipped，不硬切
+                        image_path_mode=self._image_path_mode,
+                        write_manifest=self._export_manifest,
+                        cleanup_parser_files=True,
+                    )
+                ).run(
+                    pdf_path=task.pdf_path,
+                    markdown_path=parsed.markdown_path,
+                    images_dir=images_dir,
+                    parser_source=parsed.parser,
+                    progress=progress,
+                )
+                for w in asset_result.warnings[:8]:
+                    progress(f"Asset 提示：{w}")
+
                 repaired = repair.run(
                     pdf_path=task.pdf_path,
                     raw_markdown_path=parsed.markdown_path,
@@ -173,7 +220,14 @@ class ConversionWorker(QThread):
 
                 md_str = str(repaired.markdown_path) if self._export_md and repaired.markdown_path.exists() else ""
                 elapsed = time.time() - t0
-                write_task_log(out_dir, f"OK components md={self._export_md} raw={self._export_raw_md} json={self._export_repair_json}")
+                if self._export_conversion_log:
+                    write_task_log(
+                        out_dir,
+                        f"OK components md={self._export_md} raw={self._export_raw_md} "
+                        f"json={self._export_repair_json} log={self._export_conversion_log} "
+                        f"manifest={self._export_manifest}",
+                    )
+                self._cleanup_optional_exports(out_dir, images_dir)
                 self.task_finished.emit(
                     task.id, True, md_str, str(out_dir), "", elapsed
                 )
@@ -183,6 +237,7 @@ class ConversionWorker(QThread):
                 elapsed = time.time() - t0
                 err = f"{e}\n{traceback.format_exc()}"
                 write_task_log(out_dir, err)
+                self._cleanup_optional_exports(out_dir, out_dir / "images")
                 self.task_finished.emit(task.id, False, "", str(out_dir), str(e), elapsed)
                 self.log_line.emit(f"失败 {task.name}: {e}")
                 log.exception("失败 %s", task.name)

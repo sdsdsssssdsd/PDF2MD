@@ -119,7 +119,20 @@ class MainWindow(QMainWindow):
         self.cb_repair_json = QCheckBox("修复报告（.repair.json）")
         self.cb_repair_json.setChecked(False)
         self.cb_repair_json.setToolTip("保留 RepairPipeline 质量/修复报告")
-        for c in (self.cb_images, self.cb_md, self.cb_raw_md, self.cb_repair_json):
+        self.cb_conversion_log = QCheckBox("转换日志（conversion.log）")
+        self.cb_conversion_log.setChecked(False)
+        self.cb_conversion_log.setToolTip("保留每篇论文目录下的转换过程日志（默认不导出）")
+        self.cb_manifest = QCheckBox("图片清单（manifest.json）")
+        self.cb_manifest.setChecked(False)
+        self.cb_manifest.setToolTip("保留 images/manifest.json 图资产元数据（默认不导出）")
+        for c in (
+            self.cb_images,
+            self.cb_md,
+            self.cb_raw_md,
+            self.cb_repair_json,
+            self.cb_conversion_log,
+            self.cb_manifest,
+        ):
             export_row.addWidget(c)
         export_row.addStretch(1)
         root.addLayout(export_row)
@@ -266,6 +279,8 @@ class MainWindow(QMainWindow):
         self.cb_md.setChecked(bool(cfg.get("export_md", True)))
         self.cb_raw_md.setChecked(bool(cfg.get("export_raw_md", False)))
         self.cb_repair_json.setChecked(bool(cfg.get("export_repair_json", False)))
+        self.cb_conversion_log.setChecked(bool(cfg.get("export_conversion_log", False)))
+        self.cb_manifest.setChecked(bool(cfg.get("export_manifest", False)))
         self.cb_tables.setChecked(bool(cfg["keep_tables"]))
         self.cb_formulas.setChecked(bool(cfg["keep_formulas"]))
         self.cb_refs.setChecked(bool(cfg["keep_refs"]))
@@ -417,6 +432,8 @@ class MainWindow(QMainWindow):
             export_md=self.cb_md.isChecked(),
             export_raw_md=self.cb_raw_md.isChecked(),
             export_repair_json=self.cb_repair_json.isChecked(),
+            export_conversion_log=self.cb_conversion_log.isChecked(),
+            export_manifest=self.cb_manifest.isChecked(),
         )
         self._worker.task_status.connect(self._on_task_status)
         self._worker.task_finished.connect(self._on_task_finished)
@@ -613,6 +630,8 @@ class MainWindow(QMainWindow):
         s.setValue("export_md", self.cb_md.isChecked())
         s.setValue("export_raw_md", self.cb_raw_md.isChecked())
         s.setValue("export_repair_json", self.cb_repair_json.isChecked())
+        s.setValue("export_conversion_log", self.cb_conversion_log.isChecked())
+        s.setValue("export_manifest", self.cb_manifest.isChecked())
         s.setValue("keep_tables", self.cb_tables.isChecked())
         s.setValue("keep_formulas", self.cb_formulas.isChecked())
         s.setValue("keep_refs", self.cb_refs.isChecked())

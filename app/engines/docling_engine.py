@@ -6,7 +6,7 @@ import time
 from pathlib import Path
 from typing import Callable
 
-from app.utils.paths import DOCLING_ARTIFACTS_DIR
+from app.utils.paths import APP_ROOT, DOCLING_ARTIFACTS_DIR
 
 ProgressCB = Callable[[str], None]
 
@@ -14,11 +14,26 @@ ProgressCB = Callable[[str], None]
 _converter_cache: dict[tuple, object] = {}
 
 
+def _artifacts_looks_ready(path: Path) -> bool:
+    if not path.is_dir():
+        return False
+    try:
+        return any(path.glob("docling-project--*"))
+    except OSError:
+        return False
+
+
 def _artifacts_dir() -> Path:
     """Docling 本地模型目录：PDF2MD_DOCLING_ARTIFACTS > 项目 .cache。"""
     override = os.environ.get("PDF2MD_DOCLING_ARTIFACTS", "").strip()
     if override:
         return Path(override).expanduser().resolve()
+    if _artifacts_looks_ready(DOCLING_ARTIFACTS_DIR):
+        return DOCLING_ARTIFACTS_DIR
+    # 可选：复用上级目录已下载的 artifacts（本地双目录开发时）
+    sibling = (APP_ROOT.parent / ".cache" / "docling-artifacts").resolve()
+    if _artifacts_looks_ready(sibling):
+        return sibling
     return DOCLING_ARTIFACTS_DIR
 
 
@@ -28,6 +43,55 @@ def _ensure_runtime_env() -> None:
     os.environ.setdefault("TRANSFORMERS_NO_TF", "1")
     os.environ.setdefault("USE_TF", "0")
     os.environ.setdefault("USE_TORCH", "1")
+
+
+def _looks_like_table_model_failure(exc: BaseException) -> bool:
+    """仅在错误明确与 TableFormer 相关时才关闭表格重试。"""
+    msg = str(exc).lower()
+    name = type(exc).__name__.lower()
+    markers = (
+        "tableformer",
+        "table_structure",
+        "table structure",
+        "model_artifacts/tableformer",
+        "tableformer_fast",
+        "tableformer_accurate",
+        "/tableformer/",
+    )
+    if any(m in msg for m in markers):
+        return True
+    hub_hit = (
+        "huggingface" in msg
+        or "localentrynotfound" in name
+        or "filemetadataerror" in name
+        or "hf_hub" in msg
+        or "hf hub" in msg
+    )
+    return bool(hub_hit and "table" in msg)
+
+
+def _looks_like_formula_model_failure(exc: BaseException) -> bool:
+    """CodeFormula 拉取失败（离线等）时允许关闭公式重试。"""
+    msg = str(exc).lower()
+    name = type(exc).__name__.lower()
+    markers = (
+        "codeformula",
+        "code_formula",
+        "code-formula",
+        "formula_vlm",
+        "codeformulavlm",
+    )
+    if any(m in msg for m in markers):
+        return True
+    return (
+        "localentrynotfound" in name
+        or "filemetadataerror" in name
+        or "connection refused" in msg
+        or "10061" in msg
+        or "failed to establish a new connection" in msg
+        or "cannot find the appropriate snapshot" in msg
+        or "check your internet connection" in msg
+    )
 
 
 def _build_pipeline(
@@ -228,6 +292,7 @@ def convert_pdf(
 
     out_dir.mkdir(parents=True, exist_ok=True)
     emit("正在加载 Docling...")
+    emit("正在初始化模型（首次或清缓存后可能需 1–3 分钟，属正常现象）...")
 
     converter, use_cuda, threads = _get_converter(
         keep_images=keep_images,
@@ -236,10 +301,12 @@ def convert_pdf(
         ocr_mode=ocr_mode,
         images_scale=images_scale,
     )
+    emit("Docling 转换器已创建")
     if use_cuda is not None:
         device = "CUDA GPU" if use_cuda else f"CPU ({threads} threads)"
         emit(f"加速设备：{device}")
     emit("公式识别：" + ("开启" if keep_formulas else "关闭"))
+    emit("表格结构：" + ("开启" if keep_tables else "关闭"))
     if keep_images:
         emit(f"图片质量：scale={float(images_scale):.1f}")
         emit(
@@ -249,27 +316,41 @@ def convert_pdf(
 
     emit("正在解析 PDF...")
     t0 = time.time()
+    active_formulas = keep_formulas
+    active_tables = keep_tables
     try:
         result = converter.convert(str(pdf_path))
     except Exception as e:
-        msg = str(e)
-        if keep_tables and (
-            "huggingface" in msg.lower()
-            or "LocalEntryNotFoundError" in type(e).__name__
-            or "FileMetadataError" in type(e).__name__
-            or "Hub" in msg
-        ):
-            emit(f"表格模型不可用，改为无表格模式重试：{e}")
+        if active_formulas and _looks_like_formula_model_failure(e):
+            emit(f"公式模型不可用（多为离线/未缓存 CodeFormula），改为关闭公式识别重试：{e}")
             _converter_cache.clear()
+            active_formulas = False
+            converter, _, _ = _get_converter(
+                keep_images=keep_images,
+                keep_tables=active_tables,
+                keep_formulas=False,
+                ocr_mode=ocr_mode,
+                images_scale=images_scale,
+            )
+            try:
+                result = converter.convert(str(pdf_path))
+            except Exception as e2:
+                e = e2
+            else:
+                e = None
+        if e is not None and active_tables and _looks_like_table_model_failure(e):
+            emit(f"TableFormer 模型不可用，改为无表格结构重试：{e}")
+            _converter_cache.clear()
+            active_tables = False
             converter, _, _ = _get_converter(
                 keep_images=keep_images,
                 keep_tables=False,
-                keep_formulas=keep_formulas,
+                keep_formulas=active_formulas,
                 ocr_mode=ocr_mode,
                 images_scale=images_scale,
             )
             result = converter.convert(str(pdf_path))
-        else:
+        elif e is not None:
             raise
 
     emit("正在生成原始 Markdown...")
@@ -298,7 +379,8 @@ def convert_pdf(
         artifacts_dir=artifacts if artifacts.exists() else None,
         metadata={
             "elapsed_sec": elapsed,
-            "keep_formulas": keep_formulas,
+            "keep_formulas": active_formulas,
+            "keep_tables": active_tables,
             "images_scale": images_scale,
         },
     )
