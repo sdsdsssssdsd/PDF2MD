@@ -5,7 +5,7 @@ from __future__ import annotations
 import re
 from pathlib import Path
 
-ROOT = Path(r"d:\Docling\github-submit")
+ROOT = Path(__file__).resolve().parents[1]
 
 # Drop local-only sync helper from public tree
 sync = ROOT / "scripts" / "_sync_to_github_submit.py"
