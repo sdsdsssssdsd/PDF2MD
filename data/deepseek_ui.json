@@ -1,0 +1,188 @@
+{
+  "version": 1,
+  "click_strategy": "recorded",
+  "match_threshold": 0.72,
+  "templates": {
+    "vision_mode": {
+      "file": "data\\deepseek_templates\\vision_mode.png",
+      "ref_box": [
+        1180,
+        495,
+        1420,
+        575
+      ],
+      "ref_size": [
+        2560,
+        1528
+      ]
+    },
+    "new_chat": {
+      "file": "data\\deepseek_templates\\new_chat.png",
+      "ref_box": [
+        20,
+        20,
+        220,
+        70
+      ],
+      "ref_size": [
+        2560,
+        1528
+      ]
+    },
+    "attach": {
+      "file": "data\\deepseek_templates\\attach.png",
+      "ref_box": [
+        1480,
+        680,
+        1540,
+        740
+      ],
+      "ref_size": [
+        2560,
+        1528
+      ]
+    },
+    "send": {
+      "file": "data\\deepseek_templates\\send.png",
+      "gray_file": "data\\deepseek_templates\\send_gray.png",
+      "search_roi": [
+        0.62,
+        0.7,
+        1.0,
+        1.0
+      ],
+      "threshold": 0.62,
+      "locate_threshold": 0.55,
+      "poll_ms": 400,
+      "require_blue": true,
+      "notes": "send_gray=禁用灰箭头定位；send=蓝色；灰→蓝后立即点"
+    },
+    "stop": {
+      "file": "data\\deepseek_templates\\stop.png",
+      "search_roi": [
+        0.62,
+        0.7,
+        1.0,
+        1.0
+      ],
+      "threshold": 0.75,
+      "notes": "生成中蓝圆白方块停止钮；须得分高于 send 模板才判定，避免误伤发送键"
+    },
+    "continue_gen": {
+      "file": "data\\deepseek_templates\\continue_gen.png",
+      "search_roi": [
+        0.08,
+        0.25,
+        0.98,
+        0.98
+      ],
+      "threshold": 0.68,
+      "notes": "回答截断时的「继续生成」胶囊按钮"
+    },
+    "action_toolbar": {
+      "file": "data\\deepseek_templates\\action_toolbar.png",
+      "search_roi": [
+        0.08,
+        0.35,
+        0.72,
+        0.98
+      ],
+      "threshold": 0.58,
+      "notes": "生成结束后回答下方：复制/重试/赞/踩/分享 一整行"
+    },
+    "copy_response": {
+      "file": "data\\deepseek_templates\\copy_response.png",
+      "search_roi": [
+        0.08,
+        0.35,
+        0.55,
+        0.98
+      ],
+      "threshold": 0.50,
+      "notes": "从 action_toolbar 裁出的最左复制图标；优先在工具栏命中区内点（略降阈值避免复制失败走 DOM）"
+    },
+    "copy_done": {
+      "file": "data\\deepseek_templates\\copy_done.png",
+      "search_roi": [
+        0.08,
+        0.35,
+        0.55,
+        0.98
+      ],
+      "threshold": 0.62,
+      "notes": "复制中对号；恢复为 copy_response 即复制完毕"
+    }
+  },
+  "notes": "由 浏览器页面/1.png 生成；可运行 scripts/calibrate_deepseek_ui.py 重校准",
+  "recorded_workflow": {
+    "enabled": true,
+    "recorded_at": "2026-08-24T04:21:19.986690+00:00",
+    "viewport": {
+      "width": 1400,
+      "height": 900
+    },
+    "runtime_auto": [
+      "auto_upload",
+      "auto_fill_prompt",
+      "auto_send"
+    ],
+    "steps": [
+      {
+        "id": "new_chat",
+        "action": "click",
+        "locators": [
+          {
+            "strategy": "text",
+            "text": "开启新对话",
+            "exact": true
+          }
+        ],
+        "captured_tag": "div"
+      },
+      {
+        "id": "vision_mode",
+        "action": "click",
+        "locators": [
+          {
+            "strategy": "role",
+            "role": "radiogroup",
+            "name": "快速模式 专家模式 识图模式"
+          },
+          {
+            "strategy": "text",
+            "text": "快速模式 专家模式 识图模式",
+            "exact": true
+          },
+          {
+            "strategy": "text",
+            "text": "使用识图模式开始对话 快速模式 专家模式 识图模式 深度思考 智能搜索",
+            "exact": false
+          }
+        ],
+        "captured_tag": "div"
+      },
+      {
+        "id": "prompt",
+        "action": "click",
+        "locators": [
+          {
+            "strategy": "placeholder",
+            "text": "给 DeepSeek 发送消息"
+          },
+          {
+            "strategy": "text",
+            "text": "深度思考 智能搜索",
+            "exact": true
+          },
+          {
+            "strategy": "text",
+            "text": "使用识图模式开始对话 快速模式 专家模式 识图模式 深度思考 智能搜索",
+            "exact": false
+          }
+        ],
+        "captured_tag": "textarea",
+        "note": "运行时自动 fill batch Prompt，无需手打"
+      }
+    ]
+  }
+}

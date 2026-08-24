@@ -1,4 +1,4 @@
-# Batch convert: scan input\*.pdf, default Docling, output to <OutputDir>\<stem>\
+# 批量转换：扫描 input\*.pdf，默认 Docling，输出到指定导出目录\<stem>\
 param(
     [ValidateSet("Docling", "MinerU")]
     [string]$Engine = "Docling",
@@ -9,13 +9,14 @@ $ErrorActionPreference = "Stop"
 $Root = Split-Path -Parent $PSScriptRoot
 if (-not (Test-Path (Join-Path $Root "input"))) {
     $Root = $PSScriptRoot
+    if (-not (Test-Path (Join-Path $Root "input"))) {
+        $Root = "D:\Docling"
+    }
 }
 
-# Prefer active Python / PATH tools; override with env if needed
-$Python = if ($env:PDF2MD_PYTHON) { $env:PDF2MD_PYTHON } else { (Get-Command python -ErrorAction Stop).Source }
-$DoclingCmd = Get-Command docling -ErrorAction SilentlyContinue
-$MinerUCmd = Get-Command mineru -ErrorAction SilentlyContinue
-
+$Python = "C:\python\python3-12.3\python.exe"
+$Docling = "C:\python\python3-12.3\Scripts\docling.exe"
+$MinerU = "C:\python\python3-12.3\Scripts\mineru.exe"
 $InputDir = Join-Path $Root "input"
 if (-not $OutputDir) {
     $OutputDir = Join-Path $Root "output"
@@ -25,7 +26,7 @@ $LogDir = Join-Path $Root "logs"
 New-Item -ItemType Directory -Force -Path $OutputDir, $LogDir | Out-Null
 $pdfs = Get-ChildItem -Path $InputDir -Filter *.pdf -File -ErrorAction SilentlyContinue
 if (-not $pdfs) {
-    Write-Host "No PDF in input: $InputDir"
+    Write-Host "input 目录没有 PDF：$InputDir"
     exit 0
 }
 
@@ -33,14 +34,12 @@ foreach ($pdf in $pdfs) {
     $stem = [System.IO.Path]::GetFileNameWithoutExtension($pdf.Name)
     $out = Join-Path $OutputDir $stem
     New-Item -ItemType Directory -Force -Path $out | Out-Null
-    Write-Host "==== Converting $($pdf.Name) ($Engine) ===="
+    Write-Host "==== 转换 $($pdf.Name) ($Engine) ===="
     try {
         if ($Engine -eq "MinerU") {
-            if (-not $MinerUCmd) { throw "mineru CLI not found on PATH" }
-            & $MinerUCmd.Source -p $pdf.FullName -o $out -b pipeline -m auto
+            & $MinerU -p $pdf.FullName -o $out -b pipeline -m auto
         } else {
-            if (-not $DoclingCmd) { throw "docling CLI not found on PATH" }
-            & $DoclingCmd.Source convert $pdf.FullName --to md --output $out
+            & $Docling convert $pdf.FullName --to md --output $out
         }
         Write-Host "OK -> $out"
     } catch {

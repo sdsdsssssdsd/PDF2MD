@@ -20,10 +20,16 @@ class EngineChoice(str, Enum):
     AUTO = "自动"
 
 
+class WorkflowChoice(str, Enum):
+    STRUCTURED = "快速自动"
+    VISION = "高保真视觉"
+
+
 @dataclass
 class ConvertTask:
     pdf_path: Path
     engine: str = EngineChoice.DOCLING.value
+    workflow: str = WorkflowChoice.STRUCTURED.value
     status: str = TaskStatus.WAITING.value
     pages: int | None = None
     size_bytes: int = 0
@@ -32,6 +38,13 @@ class ConvertTask:
     output_dir: Path | None = None
     error: str = ""
     message: str = ""
+    formula_recognized: int | None = None
+    formula_post_ok: int | None = None
+    formula_total: int | None = None
+    vision_force_rerun: bool = False
+    vision_final_chars: int | None = None
+    vision_ds_chars: int | None = None
+    vision_fidelity_ratio: float | None = None
     id: str = field(default="")
 
     def __post_init__(self) -> None:

@@ -1,0 +1,329 @@
+QMainWindow, QDialog {
+    background: @WINDOW@;
+    color: @TEXT@;
+}
+
+QWidget {
+    color: @TEXT@;
+}
+
+QLabel[role="title"] {
+    font-size: 18px;
+    font-weight: 600;
+}
+
+QLabel[role="sectionTitle"] {
+    font-size: 14px;
+    font-weight: 600;
+}
+
+QLabel[role="muted"] {
+    color: @TEXT_MUTED@;
+}
+
+QLabel[role="subtle"] {
+    color: @TEXT_SUBTLE@;
+}
+
+QFrame[uiCard="true"] {
+    background: @SURFACE@;
+    border: 1px solid @BORDER@;
+    border-radius: 11px;
+}
+
+QLineEdit, QComboBox, QSpinBox {
+    min-height: 30px;
+    padding: 0 9px;
+    background: @SURFACE@;
+    border: 1px solid @BORDER_STRONG@;
+    border-radius: 7px;
+    selection-background-color: @ACCENT@;
+}
+
+QLineEdit:focus, QComboBox:focus, QSpinBox:focus {
+    border: 1px solid @ACCENT@;
+}
+
+QLineEdit:disabled, QComboBox:disabled, QSpinBox:disabled {
+    background: @DISABLED_BG@;
+    color: @DISABLED_TEXT@;
+}
+
+QPushButton {
+    min-height: 30px;
+    padding: 0 12px;
+    background: @SURFACE@;
+    border: 1px solid @BORDER_STRONG@;
+    border-radius: 7px;
+}
+
+QPushButton:hover {
+    background: @SURFACE_HOVER@;
+}
+
+QPushButton:pressed {
+    border-color: @ACCENT@;
+}
+
+QPushButton:disabled {
+    background: @DISABLED_BG@;
+    color: @DISABLED_TEXT@;
+    border-color: @BORDER@;
+}
+
+QPushButton[variant="primary"] {
+    min-height: 36px;
+    padding: 0 18px;
+    color: @ACCENT_TEXT@;
+    background: @ACCENT@;
+    border-color: @ACCENT@;
+    font-weight: 600;
+}
+
+QPushButton[variant="primary"]:hover {
+    background: @ACCENT_HOVER@;
+}
+
+QPushButton[variant="primary"]:pressed {
+    background: @ACCENT_PRESSED@;
+}
+
+QPushButton[variant="danger"] {
+    color: @DANGER@;
+}
+
+QPushButton[variant="dangerFill"] {
+    color: white;
+    background: @DANGER@;
+    border-color: @DANGER@;
+}
+
+QPushButton[segment="true"] {
+    border-radius: 0;
+    margin: 0;
+}
+
+QPushButton[segmentPosition="first"] {
+    border-top-left-radius: 7px;
+    border-bottom-left-radius: 7px;
+}
+
+QPushButton[segmentPosition="last"] {
+    border-top-right-radius: 7px;
+    border-bottom-right-radius: 7px;
+}
+
+QPushButton[segment="true"]:checked {
+    color: @ACCENT@;
+    background: @SELECTION@;
+    border-color: @ACCENT@;
+    font-weight: 600;
+}
+
+QLabel[statusBadge="true"] {
+    border-radius: 9px;
+    padding: 2px 8px;
+    font-size: 12px;
+}
+
+QLabel[tone="neutral"] {
+    color: @TEXT_MUTED@;
+    background: @SURFACE_ALT@;
+}
+
+QLabel[tone="info"] {
+    color: @INFO@;
+    background: @INFO_BG@;
+}
+
+QLabel[tone="success"] {
+    color: @SUCCESS@;
+    background: @SUCCESS_BG@;
+}
+
+QLabel[tone="warning"] {
+    color: @WARNING@;
+    background: @WARNING_BG@;
+}
+
+QLabel[tone="danger"] {
+    color: @DANGER@;
+    background: @DANGER_BG@;
+}
+
+QFrame[notice="true"] {
+    border-radius: 8px;
+    border: 1px solid @BORDER@;
+}
+
+QFrame[noticeTone="info"] {
+    background: @INFO_BG@;
+    border-color: @INFO@;
+}
+
+QFrame[noticeTone="warning"] {
+    background: @WARNING_BG@;
+    border-color: @WARNING@;
+}
+
+QFrame[noticeTone="danger"] {
+    background: @DANGER_BG@;
+    border-color: @DANGER@;
+}
+
+QTableWidget, QTreeWidget, QTableView {
+    background: @SURFACE@;
+    alternate-background-color: @SURFACE_ALT@;
+    border: 1px solid @BORDER@;
+    border-radius: 8px;
+    gridline-color: transparent;
+    selection-background-color: @SELECTION@;
+    selection-color: @TEXT@;
+}
+
+QHeaderView::section {
+    min-height: 34px;
+    padding: 0 8px;
+    background: @SURFACE_ALT@;
+    color: @TEXT_MUTED@;
+    border: none;
+    border-bottom: 1px solid @BORDER@;
+    font-weight: 600;
+}
+
+QTabWidget::pane {
+    border: 1px solid @BORDER@;
+    border-radius: 8px;
+    background: @SURFACE@;
+}
+
+QTabBar::tab {
+    padding: 8px 14px;
+    color: @TEXT_MUTED@;
+}
+
+QTabBar::tab:selected {
+    color: @ACCENT@;
+    font-weight: 600;
+}
+
+QScrollBar:vertical {
+    width: 10px;
+    background: transparent;
+}
+
+QScrollBar::handle:vertical {
+    min-height: 28px;
+    margin: 2px;
+    background: @BORDER_STRONG@;
+    border-radius: 4px;
+}
+
+QToolBar {
+    background: @SURFACE@;
+    border: none;
+    border-bottom: 1px solid @BORDER@;
+    spacing: 6px;
+    padding: 4px 8px;
+}
+
+QProgressBar {
+    border: none;
+    background: @SURFACE_ALT@;
+    border-radius: 4px;
+    min-height: 6px;
+    max-height: 6px;
+}
+
+QProgressBar::chunk {
+    background: @ACCENT@;
+    border-radius: 4px;
+}
+
+QGroupBox {
+    border: 1px solid @BORDER@;
+    border-radius: 11px;
+    margin-top: 12px;
+    padding-top: 10px;
+    background: @SURFACE@;
+}
+
+QGroupBox::title {
+    subcontrol-origin: margin;
+    left: 12px;
+    padding: 0 6px;
+    color: @TEXT@;
+    font-weight: 600;
+}
+
+QPlainTextEdit, QTextEdit {
+    background: @SURFACE@;
+    border: 1px solid @BORDER@;
+    border-radius: 8px;
+}
+
+QSplitter::handle {
+    background: @BORDER@;
+    width: 1px;
+}
+
+QCheckBox {
+    spacing: 6px;
+}
+
+QFrame#dropZone {
+    border: 2px dashed @BORDER_STRONG@;
+    border-radius: 10px;
+    background: @SURFACE_ALT@;
+}
+
+QFrame#dropZone:hover {
+    border-color: @ACCENT@;
+    background: @SELECTION@;
+}
+
+QFrame#commandBar {
+    background: @SURFACE@;
+    border-top: 1px solid @BORDER@;
+}
+
+QWidget#profilePane {
+    background: @WINDOW@;
+}
+
+QListWidget#settingsNav {
+    background: @SURFACE@;
+    border: 1px solid @BORDER@;
+    border-radius: 8px;
+    outline: none;
+    padding: 6px;
+}
+
+QListWidget#settingsNav::item {
+    min-height: 36px;
+    padding: 6px 12px;
+    border-radius: 6px;
+    color: @TEXT_MUTED@;
+}
+
+QListWidget#settingsNav::item:hover {
+    background: @SURFACE_HOVER@;
+}
+
+QListWidget#settingsNav::item:selected {
+    background: @SELECTION@;
+    color: @ACCENT@;
+    font-weight: 600;
+}
+
+QPushButton[variant="icon"] {
+    min-height: 28px;
+    min-width: 28px;
+    padding: 0 6px;
+    border: none;
+    background: transparent;
+}
+
+QPushButton[variant="icon"]:hover {
+    background: @SURFACE_HOVER@;
+}

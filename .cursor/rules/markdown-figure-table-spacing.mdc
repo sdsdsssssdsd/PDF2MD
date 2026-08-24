@@ -1,0 +1,39 @@
+---
+description: Markdown 中表格与图片必须空行分隔，防止图片并入表格
+alwaysApply: true
+---
+
+# Markdown：表格 ↔ 图片间距（硬规则）
+
+学术 PDF 转 Markdown 时必须遵守：
+
+**图片链接（`![...](...)`）与表格行（以 `|` 开头）之间，至少严格空一行。**
+
+否则 CommonMark / Typora / VS Code / GitHub 等渲染器会把图片吃进表格单元格，出现「图片在表格里」的错误版式。
+
+## 错误
+
+```markdown
+| Region | χ² | 12 | 16.325 | 0.1768 |
+![Figure 5](images/image_5_paper.png)
+**Figure 5.** Caption text...
+```
+
+## 正确
+
+```markdown
+| Region | χ² | 12 | 16.325 | 0.1768 |
+
+![Figure 5](images/image_5_paper.png)
+
+**Figure 5.** Caption text...
+```
+
+（图后若紧跟表格，同样必须空一行。）
+
+## 实现位置
+
+- `app/utils/md_postprocess.py` → `ensure_figure_table_separation`（Repair 后处理必跑）
+- `app/assets/md_rewriter.py`（AssetPipeline 重写图片引用时同步保证）
+
+修改 Markdown 导出 / 重写逻辑时，**不得**去掉该空行插入。

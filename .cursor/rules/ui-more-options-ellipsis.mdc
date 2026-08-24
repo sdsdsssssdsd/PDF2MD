@@ -1,0 +1,37 @@
+---
+description: 主界面拥挤选项必须用「…」弹窗收纳，禁止全部平铺
+alwaysApply: true
+---
+
+# UI：主行精简 +「…」更多选项（硬规则）
+
+主窗口选项行**禁止**把次要/诊断/中间产物全部平铺展开。必须：
+
+1. **主行只留高频、必要项**（例如导出：图片 + Markdown；识别：表格 + 参考文献）
+2. **其余收入「…」按钮弹窗**（`MoreOptionsDialog` / `make_ellipsis_button`）
+3. **主行旁用短摘要**提示弹窗内已开启项（`extras_summary` 或等价文案）
+
+## 错误
+
+```text
+导出组件：[图片][Markdown][原始][修复报告][转换日志][清单][公式QA][计时]  ← 全展开
+```
+
+## 正确
+
+```text
+导出组件：[图片][Markdown]  已开：公式 QA、计时  […]
+                         ↑ 点省略号打开 MoreOptionsDialog
+```
+
+## 实现位置
+
+- `app/dialogs/more_options_dialog.py` → `MoreOptionsDialog` / `make_ellipsis_button` / `extras_summary`
+- `app/main_window.py` → 导出组件、识别公式选项
+- `app/dialogs/experiment_cache_dialog.py` → 诊断缓存查看/清除（工具栏「诊断缓存」）
+
+## 适用范围（同类必须遵守）
+
+新增或改造主界面选项行时，若控件 ≥ 4 个、或含「默认关闭的诊断/中间产物」，**必须**用本模式，不得恢复全量平铺。设置页分组对话框可例外（本身已是弹窗）。
+
+诊断类缓存（如 `logs/experiment`）不得只写不收：工具栏须提供查看与清除入口。

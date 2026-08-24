@@ -15,31 +15,34 @@ class DropWidget(QFrame):
         super().__init__(parent)
         self.setAcceptDrops(True)
         self.setObjectName("dropZone")
-        self.setMinimumHeight(160)
         self.setCursor(Qt.CursorShape.PointingHandCursor)
+        self._compact = False
 
         layout = QVBoxLayout(self)
         layout.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        self.label = QLabel(
-            "将 PDF 拖到这里\n\n或点击这里选择 PDF 文件\n\n支持一次拖入多个 PDF"
-        )
+        self.title = QLabel("拖入学术 PDF")
+        self.title.setProperty("role", "sectionTitle")
+        self.title.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self.label = QLabel("支持多文件 / 文件夹 · 或点击选择")
         self.label.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        self.label.setStyleSheet("color: #444; font-size: 15px;")
+        self.label.setProperty("role", "muted")
+        layout.addWidget(self.title)
         layout.addWidget(self.label)
+        self.set_compact(False)
 
-        self.setStyleSheet(
-            """
-            QFrame#dropZone {
-                border: 2px dashed #8a8a8a;
-                border-radius: 10px;
-                background: #f7f7f7;
-            }
-            QFrame#dropZone:hover {
-                border-color: #2b6cb0;
-                background: #eef5fc;
-            }
-            """
-        )
+    def set_compact(self, compact: bool) -> None:
+        self._compact = compact
+        if compact:
+            self.setMinimumHeight(56)
+            self.setMaximumHeight(64)
+            self.title.setText("继续添加 PDF")
+            self.label.hide()
+        else:
+            self.setMaximumHeight(16777215)
+            self.setMinimumHeight(148)
+            self.title.setText("拖入学术 PDF")
+            self.label.setText("支持多文件 / 文件夹 · 或点击选择")
+            self.label.show()
 
     def mousePressEvent(self, event) -> None:  # noqa: N802
         if event.button() == Qt.MouseButton.LeftButton:

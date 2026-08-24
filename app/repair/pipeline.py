@@ -89,8 +89,93 @@ class RepairPipeline:
             )
 
         emit("Safe 修复：Unicode 归一 / 无歧义清理 / 粗体恢复")
+        formula_report: dict | None = None
+        formula_publishable = True
+        text = raw_text
+        if cfg.keep_formulas:
+            from app.formula import FormulaPipeline, formula_config_for_preset
+            from app.formula.config import formula_config_for_deepseek_limited_production
+
+            preset = getattr(cfg, "formula_recovery_preset", None) or "balanced"
+            if getattr(cfg, "deepseek_limited_production", False) and preset == "balanced":
+                fcfg = formula_config_for_deepseek_limited_production(
+                    fallback_mode="clean",
+                    crop_render_scale=2.0,  # 公式 OCR 与图片导出 scale 解耦
+                )
+                emit("FormulaPipeline：Lean Balanced（Docling LaTeX 种子 + DeepSeek 主修）")
+            else:
+                fcfg = formula_config_for_preset(preset, fallback_mode="clean")
+                emit(
+                    f"FormulaPipeline：Cheap QA + 预算恢复（preset={fcfg.recovery_preset}）"
+                )
+            b = fcfg.budget
+            lean = bool(getattr(fcfg, "lean_docling_balanced", False)) or (
+                (fcfg.recognizer_primary or "").lower().strip() in {"", "null", "none"}
+            )
+            if lean:
+                emit("公式 OCR：Lean Balanced — DeepSeek 主修（不调用 UniMERNet）")
+            elif b.max_ocr_calls_per_formula <= 0:
+                emit("公式 OCR：Fast — 隔离错误公式，不调用 UniMERNet")
+            else:
+                doc_cap = (
+                    f"全文最多 {b.max_ocr_calls_per_document} 次、"
+                    if b.max_ocr_calls_per_document > 0
+                    else "全文不限次数、"
+                )
+                emit(
+                    f"公式 OCR：UniMERNet/{fcfg.recovery_preset}，"
+                    f"每式最多 {b.max_ocr_calls_per_formula} 次、"
+                    f"{doc_cap}"
+                    f"裁图 {fcfg.crop_render_scale:g}×（首次 GPU 加载可能稍慢）"
+                )
+            if fcfg.deepseek_limited_production_enabled:
+                wb_cap = int(fcfg.deepseek_max_writebacks_per_document or 0)
+                wb_msg = (
+                    "不限制条数（高置信全量写回）"
+                    if wb_cap <= 0
+                    else f"最多写回 {wb_cap} 处（高置信）"
+                )
+                emit(f"DeepSeek Limited Production：display 式 {wb_msg}")
+            fp = FormulaPipeline(fcfg)
+            fres = fp.process_markdown(text, pdf_path=pdf_path)
+            text = fres.markdown
+            formula_report = fres.report.to_dict()
+            tel = (formula_report or {}).get("telemetry") or {}
+            if tel:
+                emit(
+                    f"公式耗时 {tel.get('total_seconds', 0)}s / "
+                    f"OCR {tel.get('ocr_calls', 0)} 次 "
+                    f"（真恢复 {tel.get('true_formula_recovery_rate_num', 0)}，"
+                    f"否决 {tel.get('recovery_rejected', 0)}，"
+                    f"跳过 {tel.get('recovery_skipped_budget', 0)}）"
+                )
+            dq = fres.report.document_quality
+            if dq is not None:
+                formula_publishable = bool(dq.publishable)
+                if not dq.publishable:
+                    emit(
+                        f"公式质量检查未通过：status={dq.status}，"
+                        f"failures={dq.formula_failures}（{', '.join(dq.reasons[:4])}）"
+                    )
+            if fres.report.corrupted_formula_count:
+                emit(f"污染公式：{fres.report.corrupted_formula_count} 处 → 已尝试恢复")
+            if fres.report.recovery_attempted_count:
+                emit(
+                    f"恢复尝试：{fres.report.recovery_attempted_count}，"
+                    f"成功 {fres.report.recovery_success_count}，"
+                    f"失败 {fres.report.recovery_failed_count}"
+                )
+            if fres.report.suspected_unwrapped:
+                emit(f"疑似漏检公式：{fres.report.suspected_unwrapped} 处（仅报告）")
+            wb = fres.report.writeback or {}
+            if wb:
+                emit(
+                    f"DeepSeek 写回审计：applied={wb.get('applied_count', wb.get('applied', 0))}，"
+                    f"dry_run={wb.get('dry_run')}"
+                )
+
         text = postprocess_markdown(
-            raw_text,
+            text,
             pdf_path=pdf_path,
             fix_inline_math=bool(cfg.keep_formulas),
             fix_bold=bool(cfg.fix_bold),
@@ -197,6 +282,12 @@ class RepairPipeline:
         for w in warnings:
             emit(f"校验警告：{w}")
 
+        from app.utils.typora_math_repair import lint_typora_math
+
+        typora_issues = lint_typora_math(text)
+        if typora_issues:
+            emit(f"Typora 兼容：{len(typora_issues)} 处待关注（见 repair.json typora_compat）")
+
         report_path = None
         if cfg.write_repair_json:
             report_path = out_dir / f"{stem}.repair.json"
@@ -220,13 +311,30 @@ class RepairPipeline:
                     for i in issues[:200]
                 ],
                 "validator_warnings": warnings,
+                "typora_compat": [
+                    {"code": i.code, "message": i.message, "snippet": i.snippet}
+                    for i in typora_issues[:50]
+                ],
                 "mode": cfg.mode,
+                "formula": formula_report,
+                "document_status": (
+                    "ok" if formula_publishable else "formula_incomplete"
+                ),
             }
             report_path.write_text(
                 json.dumps(payload, ensure_ascii=False, indent=2),
                 encoding="utf-8",
             )
             emit(f"修复报告 → {report_path.name}")
+
+        # 旁路诊断 sidecar：每次跑 FormulaPipeline 都刷新，避免「全合法」时沿用旧 QA
+        if formula_report is not None and cfg.keep_formulas:
+            qa_path = out_dir / f"{stem}.formula_qa.json"
+            qa_path.write_text(
+                json.dumps(formula_report, ensure_ascii=False, indent=2),
+                encoding="utf-8",
+            )
+            emit(f"公式 QA → {qa_path.name}")
 
         return RepairResult(
             markdown_path=final_md,
@@ -237,5 +345,10 @@ class RepairPipeline:
             methods=methods,
             quality_before=before,
             quality_after=after,
-            metadata={"validator_warnings": warnings, "export_md": cfg.write_final_md},
+            metadata={
+                "validator_warnings": warnings,
+                "export_md": cfg.write_final_md,
+                "formula_publishable": formula_publishable,
+                "document_status": "ok" if formula_publishable else "formula_incomplete",
+            },
         )

@@ -1,0 +1,34 @@
+---
+description: 行间公式必须用多行 $$ 围栏，禁止单行 $$...$$（Typora \\tag 依赖）
+alwaysApply: true
+---
+
+# Markdown：行间公式多行围栏（硬规则）
+
+学术 PDF 转 Markdown 时，**display math 必须写成多行围栏**，禁止单行横排。
+
+## 错误
+
+```markdown
+$$E\left[\left(y-\hat{f}\right)^{2}\right]=Bias^{2}+V+\varepsilon\tag{1}$$
+```
+
+## 正确
+
+```markdown
+$$
+E\left[\left(y-\hat{f}\right)^{2}\right]=Bias^{2}+V+\varepsilon\tag{1}
+$$
+```
+
+## 原因
+
+Typora（MathJax）对单行 `$$...$$` 常无法正确显示 `\tag{n}` 右侧编号；多行围栏可稳定渲染。
+
+## 实现位置
+
+- `app/formula/writeback.py` → `build_display_block`
+- `app/utils/md_postprocess.py` → `normalize_display_math_multiline`（`postprocess_markdown` 必跑）
+- `app/formula/pipeline.py`（display 写回）
+
+修改公式导出 / 写回时，**不得**改回单行 `$$...$$`。

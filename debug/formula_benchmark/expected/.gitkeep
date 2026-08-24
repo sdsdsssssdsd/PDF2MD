@@ -1,0 +1,2 @@
+# 可选：每篇论文的 gold LaTeX，文件名建议 paperstem.json
+# { "4": "Recall = \\frac{TP}{TP+FN}", "5": "F1 = ..." }

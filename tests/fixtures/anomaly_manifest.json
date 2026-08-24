@@ -1,0 +1,47 @@
+{
+  "version": "1",
+  "description": "公式恢复异常回归集：Failure Memory 指纹 + 单测锚点",
+  "documents": [
+    {
+      "id": "O-003_Peach2019_DataDrivenClustering",
+      "cases": [
+        "early_ms_extraction_failure",
+        "page8_writeback_order_swap",
+        "bayes_tag12_misplacement",
+        "gate_false_negative_context_insufficient"
+      ],
+      "failure_classes": ["extraction_failure", "context_strong_conflict", "context_insufficient"],
+      "formula_qa": "logs/experiment/O-003_Peach2019_DataDrivenClustering/O-003_Peach2019_DataDrivenClustering.formula_qa.json"
+    },
+    {
+      "id": "en_O-028_Almazroei2026_SHAP_LIME",
+      "cases": [
+        "macro_weighted_context_conflict",
+        "roc_auc_skip",
+        "page16_false_eq_number"
+      ],
+      "failure_classes": ["context_strong_conflict", "extraction_failure"],
+      "formula_qa": "logs/experiment/en_O-028_Almazroei2026_SHAP_LIME/en_O-028_Almazroei2026_SHAP_LIME.formula_qa.json"
+    },
+    {
+      "id": "O-024_Le2026_LEAP_arXiv",
+      "cases": [
+        "brier_f1_page8_skip",
+        "writeback_page_mismatch",
+        "prose_fragment_accept"
+      ],
+      "failure_classes": ["context_strong_conflict", "extraction_failure"],
+      "formula_qa": "logs/experiment/O-024_Le2026_LEAP_arXiv/O-024_Le2026_LEAP_arXiv.formula_qa.json"
+    },
+    {
+      "id": "O-018_Abdo2025_Stacking_SHAP",
+      "cases": ["eq6_eq7_alignment_canary"],
+      "hard_gate": "7/7_accept",
+      "formula_qa": "logs/experiment/O-018_Abdo2025_Stacking_SHAP/O-018_Abdo2025_Stacking_SHAP.formula_qa.json"
+    }
+  ],
+  "writeback_guards": [
+    "no_arbitrary_pending_fallback",
+    "candidate_page_mismatch"
+  ]
+}

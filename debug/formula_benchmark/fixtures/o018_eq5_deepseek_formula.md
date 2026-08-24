@@ -1,0 +1,1 @@
+\[ \begin{aligned}F1=2\times\frac{Precision\times Recall}{Precision+Recall}\end{aligned} \quad (5) \]<｜end▁of▁sentence｜>
