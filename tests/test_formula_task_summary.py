@@ -11,7 +11,19 @@ def _load_qa(name: str) -> dict:
 
 
 def test_o003_metrics_after_k3_style():
+    import pytest
+
     from app.diagnostics.formula_task_summary import formula_metrics_from_qa, format_formula_fraction
+
+    fixture = (
+        Path(__file__).resolve().parents[1]
+        / "logs"
+        / "experiment"
+        / "O-003_Peach2019_DataDrivenClustering"
+        / "O-003_Peach2019_DataDrivenClustering.formula_qa.json"
+    )
+    if not fixture.is_file():
+        pytest.skip(f"local formula_qa fixture not found: {fixture}")
 
     qa = _load_qa("O-003_Peach2019_DataDrivenClustering")
     rec, post, total = formula_metrics_from_qa(qa)
