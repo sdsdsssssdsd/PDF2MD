@@ -1,0 +1,18 @@
+{
+  "instructions": [
+    "100% 检查所有自动 writeback 条目（false accept 必须为 0）。",
+    "抽样检查未修复公式与未触发 recovery 的公式。",
+    "若发现 false accept：按 reason_code / formula type / layout / OCR mode 分类，勿整系统推倒。"
+  ],
+  "documents": [
+    {
+      "doc_id": "O-018_Abdo2025_Stacking_SHAP",
+      "writebacks_to_review": 0,
+      "review_slots": {
+        "false_accept": 0,
+        "true_accept": 0,
+        "false_reject": 0
+      }
+    }
+  ]
+}

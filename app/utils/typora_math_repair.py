@@ -159,15 +159,24 @@ def repair_typora_math_body(body: str) -> str:
         s = pat.sub(repl, s)
 
     # Docling 拆字下标：M _ { i j } → M_{ij}
+    def _compact_subscript(m: re.Match[str]) -> str:
+        inner = re.sub(r"\s+", "", m.group(2))
+        return f"{m.group(1)}_{{{inner}}}"
+
     s = re.sub(
         r"([A-Za-z])\s+_\s*\{\s*([^}]+)\s*\}",
-        lambda m: f"{m.group(1)}_{{{re.sub(r'\\s+', '', m.group(2))}}}",
+        _compact_subscript,
         s,
     )
     # A U C _ { c } → AUC_{c}
+    def _compact_spaced_subscript(m: re.Match[str]) -> str:
+        base = re.sub(r"\s+", "", m.group(1))
+        inner = re.sub(r"\s+", "", m.group(2))
+        return f"{base}_{{{inner}}}"
+
     s = re.sub(
         r"\b((?:[A-Za-z]\s+){1,6}[A-Za-z])\s+_\s*\{\s*([^}]+)\s*\}",
-        lambda m: f"{re.sub(r'\\s+', '', m.group(1))}_{{{re.sub(r'\\s+', '', m.group(2))}}}",
+        _compact_spaced_subscript,
         s,
     )
     # 混淆矩阵：iand\hat → i \text{ and } \hat
