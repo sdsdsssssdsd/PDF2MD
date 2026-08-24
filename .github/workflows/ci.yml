@@ -33,4 +33,6 @@ jobs:
 
       - name: pytest
         run: python -m pytest -q
-        # Do not install Docling / MinerU or download models in CI.
+        env:
+          CI: true
+          GITHUB_ACTIONS: true

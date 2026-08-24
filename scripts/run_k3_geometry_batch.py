@@ -26,25 +26,25 @@ from app.formula.equation_identity import NOT_DECODED_RE, meaningful_context_win
 from app.formula.geometry import FormulaGeometryResolver
 from app.formula.pipeline import FormulaPipeline
 from app.formula.session import FormulaRecoverySession
-from app.utils.paths import BENCHMARK_RUNS, ensure_dirs
+from app.utils.paths import APP_ROOT
 
 CORPUS = [
-    os.environ.get("PDF2MD_BENCH_ROOT") or str(ROOT / "input"),
-    os.environ.get("PDF2MD_BENCH_ROOT") or str(ROOT / "input"),
-    os.environ.get("PDF2MD_BENCH_ROOT") or str(ROOT / "input"),
-    os.environ.get("PDF2MD_BENCH_ROOT") or str(ROOT / "input"),
-    os.environ.get("PDF2MD_BENCH_ROOT") or str(ROOT / "input"),
-    os.environ.get("PDF2MD_BENCH_ROOT") or str(ROOT / "input"),
-    os.environ.get("PDF2MD_BENCH_ROOT") or str(ROOT / "input"),
-    os.environ.get("PDF2MD_BENCH_ROOT") or str(ROOT / "input"),
-    os.environ.get("PDF2MD_BENCH_ROOT") or str(ROOT / "input"),
-    os.environ.get("PDF2MD_BENCH_ROOT") or str(ROOT / "input"),
-    os.environ.get("PDF2MD_BENCH_ROOT") or str(ROOT / "input"),
-    os.environ.get("PDF2MD_BENCH_ROOT") or str(ROOT / "input"),
-    os.environ.get("PDF2MD_BENCH_ROOT") or str(ROOT / "input"),
-    os.environ.get("PDF2MD_BENCH_ROOT") or str(ROOT / "input"),
-    os.environ.get("PDF2MD_BENCH_ROOT") or str(ROOT / "input"),
-    os.environ.get("PDF2MD_BENCH_ROOT") or str(ROOT / "input"),
+    os.environ.get("PDF2MD_BENCH_ROOT") or str(APP_ROOT / "input"),
+    os.environ.get("PDF2MD_BENCH_ROOT") or str(APP_ROOT / "input"),
+    os.environ.get("PDF2MD_BENCH_ROOT") or str(APP_ROOT / "input"),
+    os.environ.get("PDF2MD_BENCH_ROOT") or str(APP_ROOT / "input"),
+    os.environ.get("PDF2MD_BENCH_ROOT") or str(APP_ROOT / "input"),
+    os.environ.get("PDF2MD_BENCH_ROOT") or str(APP_ROOT / "input"),
+    os.environ.get("PDF2MD_BENCH_ROOT") or str(APP_ROOT / "input"),
+    os.environ.get("PDF2MD_BENCH_ROOT") or str(APP_ROOT / "input"),
+    os.environ.get("PDF2MD_BENCH_ROOT") or str(APP_ROOT / "input"),
+    os.environ.get("PDF2MD_BENCH_ROOT") or str(APP_ROOT / "input"),
+    os.environ.get("PDF2MD_BENCH_ROOT") or str(APP_ROOT / "input"),
+    os.environ.get("PDF2MD_BENCH_ROOT") or str(APP_ROOT / "input"),
+    os.environ.get("PDF2MD_BENCH_ROOT") or str(APP_ROOT / "input"),
+    os.environ.get("PDF2MD_BENCH_ROOT") or str(APP_ROOT / "input"),
+    os.environ.get("PDF2MD_BENCH_ROOT") or str(APP_ROOT / "input"),
+    os.environ.get("PDF2MD_BENCH_ROOT") or str(APP_ROOT / "input"),
 ]
 
 
