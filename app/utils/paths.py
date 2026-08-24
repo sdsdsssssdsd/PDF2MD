@@ -17,6 +17,10 @@ DOCLING_ARTIFACTS_DIR = Path(
     )
 )
 INPUT_DIR = APP_ROOT / "input"
+TESTSET_DIR = Path(os.environ.get("PDF2MD_TESTSET_DIR", str(APP_ROOT / "input")))
+OULAD_PDF_DIR = Path(
+    os.environ.get("PDF2MD_OULAD_PDF_DIR", str(INPUT_DIR / "oulad"))
+)
 OUTPUT_DIR = APP_ROOT / "output"
 LOGS_DIR = APP_ROOT / "logs"
 # 实验结果诊断镜像（timings / formula_qa）；不进论文导出目录
@@ -73,3 +77,8 @@ def task_output_dir(output_root: Path, pdf_path: Path, per_folder: bool) -> Path
     if per_folder:
         return output_root / stem
     return output_root
+
+
+def vision_task_output_dir(output_root: Path, pdf_path: Path) -> Path:
+    """高保真模式：在选定输出目录下创建「Pdf名_高保真」文件夹。"""
+    return Path(output_root) / f"{pdf_path.stem}_高保真"

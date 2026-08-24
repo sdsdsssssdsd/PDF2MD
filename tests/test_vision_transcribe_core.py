@@ -48,7 +48,11 @@ def test_page_marker_regex():
 def test_validator_accept():
     parts = []
     for p in range(1, 4):
-        parts.append(f"<!-- PDF2MD:PAGE:{p:04d} -->\n正文 {p}\n")
+        parts.append(
+            f"<!-- PDF2MD:PAGE:{p:04d} -->\n"
+            + ("正文 " * 400)
+            + f" page{p}\n"
+        )
     md = "\n".join(parts)
     r = validate_batch_markdown(md, start_page=1, end_page=3)
     assert r.ok, r.errors
@@ -114,7 +118,7 @@ def test_figure_writeback():
         )
     ]
     out = writeback_figures(md, figs)
-    assert "![](figures/p0008_fig01.png)" in out
+    assert "images/p0008_fig01.png" in out
     assert "PDF2MD:FIGURE" not in out
 
 
