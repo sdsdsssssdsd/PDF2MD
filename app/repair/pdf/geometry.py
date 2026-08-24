@@ -406,7 +406,7 @@ def repair_detached_scripts_in_text(text: str, chars: list[GeoChar]) -> tuple[st
             if is_math:
                 if seg.startswith("$$") and seg.endswith("$$") and len(seg) >= 4:
                     inner, n = _repair_chunk(seg[2:-2], wrap_dollars=False)
-                    out_parts.append(f"$${inner}$$")
+                    out_parts.append(f"$$\n{inner}\n$$")
                     total += n
                 elif seg.startswith("$") and seg.endswith("$") and len(seg) >= 2:
                     inner, n = _repair_chunk(seg[1:-1], wrap_dollars=False)

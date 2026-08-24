@@ -30,6 +30,7 @@ env/
 *.gguf
 
 # Runtime data
+data/deepseek_profile/
 input/*
 !input/.gitkeep
 output/*
@@ -41,8 +42,17 @@ icons/*
 !icons/pdf2md.ico
 !icons/pdf2md-cover.png
 
+# Formula Benchmark Lab (local corpus / run dumps)
+debug/formula_benchmark/corpus/*
+!debug/formula_benchmark/corpus/.gitkeep
+debug/formula_benchmark/runs/*
+!debug/formula_benchmark/runs/.gitkeep
+debug/formula_benchmark/expected/*
+!debug/formula_benchmark/expected/.gitkeep
+
 # User documents that must never be committed
 *.pdf
+
 
 # OS / IDE
 .DS_Store

@@ -16,8 +16,8 @@ if (-not (Test-Path -LiteralPath $icon)) {
 
 if (-not $TargetBat) {
     $candidates = @(
-        (Join-Path $Root "run_gui.bat"),
-        (Join-Path $Root "启动PDF2MD.bat")
+        (Join-Path $Root "启动PDF2MD.bat"),
+        (Join-Path $Root "run_gui.bat")
     )
     foreach ($c in $candidates) {
         if (Test-Path -LiteralPath $c) { $TargetBat = $c; break }

@@ -57,9 +57,18 @@ def get_logger() -> logging.Logger:
     return setup_logging()
 
 
-def write_task_log(folder: Path, text: str) -> Path:
+def write_task_log(folder: Path, text: str, *, run_id: str | None = None) -> Path:
+    """写入转换日志。默认追加到 conversion.log；若给 run_id 则写独立文件避免覆盖。"""
     folder.mkdir(parents=True, exist_ok=True)
-    path = folder / "conversion.log"
+    if run_id:
+        path = folder / f"conversion_{run_id}.log"
+    else:
+        path = folder / "conversion.log"
     with path.open("a", encoding="utf-8") as f:
         f.write(text.rstrip() + "\n")
     return path
+
+
+def new_run_id() -> str:
+    return datetime.now().strftime("%Y%m%d_%H%M%S")
+

@@ -1,0 +1,1 @@
+\[ E\left[\left(y-\hat{f}\right)^{2}\right]=Bias^{2}+V+\varepsilon \quad (1) \]<｜end▁of▁sentence｜>

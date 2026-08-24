@@ -5,14 +5,24 @@ build-backend = "setuptools.build_meta"
 [project]
 name = "pdf2md"
 version = "0.1.0a0"
-description = "Windows desktop GUI for academic PDF to Markdown (Docling / MinerU) with conservative post-conversion repair"
+description = "Windows desktop GUI: academic PDF to Markdown via Lean Docling + DeepSeek-OCR formula recovery"
 readme = "README.md"
 requires-python = ">=3.10"
 license = { text = "Apache-2.0" }
 authors = [
   { name = "PDF2MD Contributors" }
 ]
-keywords = ["pdf", "markdown", "docling", "mineru", "pyside6", "academic", "repair"]
+keywords = [
+  "pdf",
+  "markdown",
+  "docling",
+  "mineru",
+  "deepseek-ocr",
+  "formula",
+  "pyside6",
+  "academic",
+  "repair",
+]
 classifiers = [
   "Development Status :: 3 - Alpha",
   "Environment :: Win32 (MS Windows)",
@@ -43,6 +53,9 @@ pdf2md-gui = "app.main:main"
 
 [tool.setuptools.packages.find]
 include = ["app*"]
+
+[tool.setuptools.package-data]
+"app.ui" = ["style.qss", "icons/*.svg"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

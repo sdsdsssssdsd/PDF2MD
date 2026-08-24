@@ -1,0 +1,1 @@
+\[ \mathrm{TPR}=\frac{\mathrm{TP}}{\mathrm{TP}+\mathrm{FN}} \quad (6) \]<｜end▁of▁sentence｜>

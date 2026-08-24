@@ -15,14 +15,17 @@ ProgressCB = Callable[[str], None]
 
 
 def _hf_env() -> dict[str, str]:
-    """子进程环境：继承用户 HF_ENDPOINT / MINERU_MODEL_SOURCE，不强制镜像。"""
+    """国内直连 HuggingFace 易卡住，默认走镜像；已设置则不覆盖。"""
     env = os.environ.copy()
+    env.setdefault("HF_ENDPOINT", "https://hf-mirror.com")
     env.setdefault("HF_HUB_DISABLE_SYMLINKS_WARNING", "1")
     env.setdefault("PYTHONUNBUFFERED", "1")
-    # transformers 与 MinerU 组合时勿拉坏掉的 TensorFlow
+    # transformers 5.x 与 MinerU Unimernet 不兼容；且勿拉坏掉的 TensorFlow
     env.setdefault("TRANSFORMERS_NO_TF", "1")
     env.setdefault("USE_TF", "0")
     env.setdefault("USE_TORCH", "1")
+    # 国内 HuggingFace 元数据常失败，优先 ModelScope
+    env.setdefault("MINERU_MODEL_SOURCE", "modelscope")
     return env
 
 

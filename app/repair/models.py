@@ -35,6 +35,10 @@ class RepairConfig:
     # safe | smart | strong —— 后续接 olmOCR / DeepSeek
     mode: str = "safe"
     keep_formulas: bool = True
+    # fast | balanced | quality（debug6：公式 OCR 预算）
+    formula_recovery_preset: str = "balanced"
+    # Phase 4D：DeepSeek 高置信有限写回（默认关；仅 Balanced）
+    deepseek_limited_production: bool = False
     fix_bold: bool = True
     write_raw_md: bool = False  # 默认不保留 .raw.md
     write_repair_json: bool = False  # 默认不写 .repair.json

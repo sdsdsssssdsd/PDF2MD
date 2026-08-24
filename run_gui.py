@@ -1,4 +1,4 @@
-"""Launch entry: add project root to sys.path and start the GUI."""
+"""启动入口：固定使用默认 Python，项目在当前文件夹。"""
 from __future__ import annotations
 
 import runpy
