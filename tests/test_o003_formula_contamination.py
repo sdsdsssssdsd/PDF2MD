@@ -91,7 +91,12 @@ def test_fi_ligature_and_page_number():
 
 
 def test_o003_block_batch_no_intertext():
-    md_path = Path(os.environ.get("PDF2MD_BENCH_ROOT") or (ROOT / "input"))
+    md_path = Path(
+        os.environ.get(
+            "PDF2MD_BENCH_O003_MD",
+            str(APP_ROOT / "input" / "O-003_Peach2019_DataDrivenClustering.md"),
+        )
+    )
     if not md_path.is_file():
         md_path = APP_ROOT / "input" / "O-003_Peach2019_DataDrivenClustering.md"
     if not md_path.is_file():

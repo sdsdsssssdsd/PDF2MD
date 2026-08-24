@@ -19,8 +19,12 @@ _CI_SKIP_FILES = frozenset(
 )
 
 
+def _is_ci() -> bool:
+    return bool(os.environ.get("CI") or os.environ.get("GITHUB_ACTIONS"))
+
+
 def pytest_collection_modifyitems(config, items) -> None:
-    if not os.environ.get("CI"):
+    if not _is_ci():
         return
     reason = "needs local fixtures, GPU, or UI templates (skipped in CI)"
     mark = pytest.mark.skip(reason=reason)

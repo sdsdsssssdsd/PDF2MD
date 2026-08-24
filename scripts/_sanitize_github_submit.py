@@ -69,14 +69,38 @@ def fix_text(text: str) -> str:
     )
     t = re.sub(
         r'r?"E:\\[^"]*OULAD[^"]*"',
-        'os.environ.get("PDF2MD_BENCH_ROOT") or str(ROOT / "input")',
+        'os.environ.get("PDF2MD_BENCH_ROOT") or str(APP_ROOT / "input")',
         t,
     )
     t = re.sub(
         r'r?"E:\\[^"]*O-003[^"]*"',
-        'os.environ.get("PDF2MD_BENCH_O003_MD") or str(ROOT / "input" / "O-003.md")',
+        'os.environ.get("PDF2MD_BENCH_O003_MD") or str(APP_ROOT / "input" / "O-003_Peach2019_DataDrivenClustering.md")',
         t,
     )
+    if "APP_ROOT" in t and "from app.utils.paths import APP_ROOT" not in t:
+        if "from app.utils.paths import" in t:
+            t = re.sub(
+                r"from app\.utils\.paths import ([^\n]+)",
+                lambda m: (
+                    "from app.utils.paths import APP_ROOT"
+                    if "APP_ROOT" not in m.group(1)
+                    else m.group(0)
+                ),
+                t,
+                count=1,
+            )
+            if "from app.utils.paths import APP_ROOT" not in t:
+                t = t.replace(
+                    "from app.utils.paths import (",
+                    "from app.utils.paths import APP_ROOT, ",
+                    1,
+                )
+        elif "import pytest" in t:
+            t = t.replace(
+                "import pytest\n",
+                "import pytest\n\nfrom app.utils.paths import APP_ROOT\n",
+                1,
+            )
     if "resolve_deepseek_model_name()" in t:
         t = ensure_resolve_import(t)
     if "os.environ" in t:
