@@ -19,17 +19,13 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
-HF_ROOT = Path(r"E:\Ollama\hf-cache")
-HF_ROOT.mkdir(parents=True, exist_ok=True)
-os.environ["HF_HOME"] = str(HF_ROOT)
-os.environ["HUGGINGFACE_HUB_CACHE"] = str(HF_ROOT / "hub")
-os.environ["TRANSFORMERS_CACHE"] = str(HF_ROOT / "transformers")
-os.environ.setdefault("TRANSFORMERS_NO_TF", "1")
-os.environ.setdefault("USE_TF", "0")
-os.environ.setdefault("PYTHONIOENCODING", "utf-8")
-
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
+
+from app.ocr.deepseek_paths import ensure_deepseek_hf_env
+
+ensure_deepseek_hf_env()
+os.environ.setdefault("PYTHONIOENCODING", "utf-8")
 
 DEFAULT_HOST = "127.0.0.1"
 DEFAULT_PORT = 18765

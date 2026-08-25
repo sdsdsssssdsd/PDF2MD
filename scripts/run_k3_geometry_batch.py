@@ -26,26 +26,40 @@ from app.formula.equation_identity import NOT_DECODED_RE, meaningful_context_win
 from app.formula.geometry import FormulaGeometryResolver
 from app.formula.pipeline import FormulaPipeline
 from app.formula.session import FormulaRecoverySession
-from app.utils.paths import APP_ROOT
+from app.utils.paths import BENCHMARK_RUNS, ensure_dirs
 
-CORPUS = [
-    os.environ.get("PDF2MD_BENCH_ROOT") or str(APP_ROOT / "input"),
-    os.environ.get("PDF2MD_BENCH_ROOT") or str(APP_ROOT / "input"),
-    os.environ.get("PDF2MD_BENCH_ROOT") or str(APP_ROOT / "input"),
-    os.environ.get("PDF2MD_BENCH_ROOT") or str(APP_ROOT / "input"),
-    os.environ.get("PDF2MD_BENCH_ROOT") or str(APP_ROOT / "input"),
-    os.environ.get("PDF2MD_BENCH_ROOT") or str(APP_ROOT / "input"),
-    os.environ.get("PDF2MD_BENCH_ROOT") or str(APP_ROOT / "input"),
-    os.environ.get("PDF2MD_BENCH_ROOT") or str(APP_ROOT / "input"),
-    os.environ.get("PDF2MD_BENCH_ROOT") or str(APP_ROOT / "input"),
-    os.environ.get("PDF2MD_BENCH_ROOT") or str(APP_ROOT / "input"),
-    os.environ.get("PDF2MD_BENCH_ROOT") or str(APP_ROOT / "input"),
-    os.environ.get("PDF2MD_BENCH_ROOT") or str(APP_ROOT / "input"),
-    os.environ.get("PDF2MD_BENCH_ROOT") or str(APP_ROOT / "input"),
-    os.environ.get("PDF2MD_BENCH_ROOT") or str(APP_ROOT / "input"),
-    os.environ.get("PDF2MD_BENCH_ROOT") or str(APP_ROOT / "input"),
-    os.environ.get("PDF2MD_BENCH_ROOT") or str(APP_ROOT / "input"),
+CORPUS_STEMS = [
+    "O-027_Inoue2026_TNA",
+    "以活动为中心的在线课程学习结果影响因素实证研究",
+    "3785022.3785030",
+    "Course-Level_Clustering_to_Enhance_Dropout_Prediction_Accuracy",
+    "en_O-028_Almazroei2026_SHAP_LIME",
+    "O-001_Kuzilek2017_DataPaper",
+    "O-003_Peach2019_DataDrivenClustering",
+    "O-009_Qiu2022_ScientificReports",
+    "O-014_Cohausz2023_EDM",
+    "O-016_Howard2025_ouladFormat",
+    "O-018_Abdo2025_Stacking_SHAP",
+    "O-020_Wu2026_PLOS",
+    "O-020_Wu2026_PLOS_OA_XML_readable_snapshot",
+    "O-024_Le2026_LEAP_arXiv",
+    "O-025_daSilva2026_Survival_arXiv",
+    "O-026_Lagun2026_DeadlineInitiation",
 ]
+
+
+def _bench_root() -> Path:
+    return Path(os.environ.get("PDF2MD_BENCH_ROOT") or (ROOT / "input"))
+
+
+def _corpus_pdfs() -> list[Path]:
+    root = _bench_root()
+    pdfs: list[Path] = []
+    for stem in CORPUS_STEMS:
+        hits = sorted(root.rglob(f"{stem}.pdf"))
+        if hits:
+            pdfs.append(hits[0])
+    return pdfs
 
 
 def _find_raw_md(pdf: Path, cache_dir: Path | None = None) -> Path | None:
@@ -56,7 +70,7 @@ def _find_raw_md(pdf: Path, cache_dir: Path | None = None) -> Path | None:
     candidates.extend(
         [
             ROOT / "logs" / "experiment" / stem / f"{stem}.raw.md",
-            pdf.parent / "论文库" / stem / f"{stem}.raw.md",
+            _bench_root() / stem / f"{stem}.raw.md",
             pdf.parent / stem / f"{stem}.raw.md",
             pdf.with_suffix(".raw.md"),
         ]
@@ -401,7 +415,8 @@ def main() -> int:
     out_dir.mkdir(parents=True, exist_ok=True)
 
     rows: list[dict] = []
-    for i, p in enumerate(CORPUS):
+    corpus = _corpus_pdfs()
+    for i, p in enumerate(corpus):
         pdf = Path(p)
         print(f"== {pdf.name} ==", flush=True)
         if args.replay_qa:
@@ -422,7 +437,7 @@ def main() -> int:
         if (
             not args.geometry_only
             and not args.replay_qa
-            and i + 1 < len(CORPUS)
+            and i + 1 < len(corpus)
         ):
             from app.ocr.deepseek_worker_client import cooldown_between_batch_documents
 

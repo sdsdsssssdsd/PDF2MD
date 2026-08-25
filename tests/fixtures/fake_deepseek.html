@@ -1,0 +1,57 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8" />
+  <title>Fake DeepSeek (PDF2MD fixture)</title>
+  <style>
+    body { font-family: system-ui, sans-serif; margin: 24px; }
+    #composer { width: 100%; min-height: 48px; margin: 12px 0; }
+    #assistant { white-space: pre-wrap; border: 1px solid #ccc; padding: 12px; min-height: 120px; }
+    .attachments { display: flex; gap: 8px; flex-wrap: wrap; margin: 8px 0; }
+    .attachments img { width: 64px; height: 64px; background: #eee; border: 1px solid #ccc; }
+    .toolbar button { margin-right: 8px; }
+  </style>
+</head>
+<body>
+  <h1>Fake DeepSeek Assistant</h1>
+  <textarea id="composer" placeholder="给 DeepSeek 发送消息"></textarea>
+  <div class="attachments" id="attachments"></div>
+  <div class="toolbar">
+    <button id="copyBtn" type="button">复制</button>
+    <button id="continueBtn" type="button" style="display:none">继续生成</button>
+  </div>
+  <div id="assistant" data-message-author-role="assistant"></div>
+  <script>
+    const assistant = document.getElementById('assistant');
+    const copyBtn = document.getElementById('copyBtn');
+    const composer = document.getElementById('composer');
+    const attachments = document.getElementById('attachments');
+    const params = new URLSearchParams(location.search);
+    const text = params.get('text') || '<!-- PDF2MD:PAGE:0001 -->\\nFixture page body.\\n<!-- PDF2MD:PAGE_END:0001 -->';
+    const attachN = parseInt(params.get('attach') || '0', 10);
+    assistant.textContent = text;
+    for (let i = 0; i < attachN; i++) {
+      const img = document.createElement('img');
+      img.alt = 'page_' + (i + 1);
+      attachments.appendChild(img);
+    }
+    copyBtn.addEventListener('click', async () => {
+      try {
+        await navigator.clipboard.writeText(assistant.textContent);
+      } catch (e) {
+        console.warn(e);
+      }
+    });
+    window.__PDF2MD_COPY_CAPTURE__ = { generation: 0, items: [] };
+    if (navigator.clipboard && navigator.clipboard.writeText) {
+      const orig = navigator.clipboard.writeText.bind(navigator.clipboard);
+      navigator.clipboard.writeText = async (t) => {
+        const cap = window.__PDF2MD_COPY_CAPTURE__;
+        cap.generation += 1;
+        cap.items.push({ id: cap.generation, text: t || '', chars: (t||'').length });
+        return orig(t);
+      };
+    }
+  </script>
+</body>
+</html>

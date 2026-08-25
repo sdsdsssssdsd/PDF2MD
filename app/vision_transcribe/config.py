@@ -24,6 +24,8 @@ class VisionConfig:
     # 与快速自动一致：Docling 出图质量 / Markdown 图片路径
     images_scale: float = 2.0
     image_path_mode: str = "relative"  # relative | absolute
+    # DeepSeek 上传「服务器繁忙」账户级冷却（秒）
+    server_busy_cooldown_seconds: int = 600
 
     def resolve_profile_dir(self, app_root: Path, output_dir: Path | None = None) -> Path:
         if self.browser_profile_dir is not None:

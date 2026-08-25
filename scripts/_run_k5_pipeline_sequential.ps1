@@ -1,10 +1,10 @@
 # k5 串行评测流水线（避免 GPU 互抢）
 $ErrorActionPreference = 'Stop'
 $env:PYTHONIOENCODING = 'utf-8'
-Set-Location 'd:\Docling'
-$Paddle = 'd:\Docling\.venv-paddle-formula\Scripts\python.exe'
-$Py = 'C:\python\python3-12.3\python.exe'
-$Ds = 'E:\Ollama\venvs\dsocr2\Scripts\python.exe'
+Set-Location $PSScriptRoot\..
+$Paddle = if ($env:PDF2MD_PADDLE_PYTHON) { $env:PDF2MD_PADDLE_PYTHON } else { 'python' }
+$Py = if ($env:PDF2MD_PYTHON) { $env:PDF2MD_PYTHON } else { 'python' }
+$Ds = if ($env:PDF2MD_DSOCR2_PYTHON) { $env:PDF2MD_DSOCR2_PYTHON } else { 'python' }
 $Gold = 'benchmarks/gold/verified_all.jsonl'
 
 Write-Host '=== PP-L 361 ===' -ForegroundColor Cyan

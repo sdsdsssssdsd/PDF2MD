@@ -111,9 +111,53 @@
       ],
       "threshold": 0.62,
       "notes": "复制中对号；恢复为 copy_response 即复制完毕"
+    },
+    "retry_response": {
+      "file": "data\\deepseek_templates\\retry_response.png",
+      "search_roi": [
+        0.08,
+        0.35,
+        0.72,
+        0.98
+      ],
+      "threshold": 0.58,
+      "notes": "回答下方操作栏「重试」图标（与 retry_user_bubble 互为兜底）"
+    },
+    "retry_user_bubble": {
+      "file": "data\\deepseek_templates\\retry_user_bubble.png",
+      "search_roi": [
+        0.12,
+        0.2,
+        0.88,
+        0.85
+      ],
+      "threshold": 0.5,
+      "notes": "用户气泡右下角橙色圆形重试（发送未触发/静默失败时出现）"
+    },
+    "upload_server_busy": {
+      "file": "data\\deepseek_templates\\upload_server_busy.png",
+      "search_roi": [
+        0.02,
+        0.04,
+        0.98,
+        0.28
+      ],
+      "threshold": 0.52,
+      "notes": "附件缩略图灰底+刷新图标+服务器繁忙（账户级上传限流）"
+    },
+    "upload_server_busy_text": {
+      "file": "data\\deepseek_templates\\upload_server_busy_text.png",
+      "search_roi": [
+        0.02,
+        0.04,
+        0.98,
+        0.28
+      ],
+      "threshold": 0.5,
+      "notes": "仅「服务器繁忙」叠层文字（upload_server_busy 的兜底）"
     }
   },
-  "notes": "由 浏览器页面/1.png 生成；可运行 scripts/calibrate_deepseek_ui.py 重校准",
+  "notes": "DeepSeek web UI screenshot templates; run scripts/calibrate_deepseek_ui.py to recalibrate",
   "recorded_workflow": {
     "enabled": true,
     "recorded_at": "2026-08-24T04:21:19.986690+00:00",

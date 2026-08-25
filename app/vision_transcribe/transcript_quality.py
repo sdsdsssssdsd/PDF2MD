@@ -8,6 +8,13 @@ from app.vision_transcribe.vision_structure_repair import markdown_lacks_structu
 
 _BATCH_PAGE_RE = re.compile(r"本批次为 PAGE (\d+) 至 PAGE (\d+)")
 
+# 长会话退化：同一缩写连续刷屏（如 K. K. K. K. …），不是真实作者名
+# 真实 IEEE 作者可含短串 K. K. K. R. T. E.，绝不会连续 20 个同一字母
+_SAME_INITIAL_LOOP_RE = re.compile(r"(?:([A-Z])\.\s*)(?:\1\.\s*){19,}")
+_MIXED_INITIAL_RUN_RE = re.compile(r"((?:[A-Z]\.\s*){24,})")
+_RAW_K_RUN_RE = re.compile(r"[kK]{40,}")
+_INITIAL_LETTER_RE = re.compile(r"([A-Z])\.")
+
 
 def parse_batch_pages_from_prompt(prompt: str) -> tuple[int | None, int | None]:
     m = _BATCH_PAGE_RE.search(prompt or "")
@@ -21,6 +28,35 @@ def min_chars_for_page_span(start_page: int, end_page: int) -> int:
     if n == 1:
         return 400  # 末页参考文献等
     return n * 1200
+
+
+def has_model_degeneration(md: str) -> bool:
+    """DeepSeek 长会话偶发输出循环垃圾（如 [33] K. P. K. K. K. …）。
+
+    只拦「同一缩写连续很长一串」或「几乎只有两三个字母在刷」。
+    不因参考文献里偶尔出现的 K. K. K. R. 计次而误杀。
+    """
+    t = (md or "").replace("\r\n", "\n")
+    if not t.strip():
+        return False
+    if _RAW_K_RUN_RE.search(t):
+        return True
+    if _SAME_INITIAL_LOOP_RE.search(t):
+        return True
+    for m in _MIXED_INITIAL_RUN_RE.finditer(t):
+        letters = _INITIAL_LETTER_RE.findall(m.group(1))
+        if len(letters) >= 24 and len(set(letters)) <= 2:
+            return True
+    return False
+
+
+def model_degeneration_errors(md: str) -> list[str]:
+    if has_model_degeneration(md):
+        return [
+            "模型输出退化（连续重复字符/作者缩写循环），"
+            "请开启新对话后重试本批次"
+        ]
+    return []
 
 
 def is_references_heavy(md: str) -> bool:
@@ -50,6 +86,8 @@ def transcript_rank(md: str) -> int:
             return -1
     except Exception:
         pass
+    if has_model_degeneration(t):
+        return -1
 
     score = len(t)
     pages = page_numbers_in_text(t)
@@ -71,8 +109,15 @@ def batch_transcript_complete(
     *,
     start_page: int | None = None,
     end_page: int | None = None,
+    batch_id: int | None = None,
+    require_batch_end: bool = False,
 ) -> bool:
-    """批次 PAGE 范围 + 字数是否达标。"""
+    """批次 PAGE 范围 + 字数是否达标；可选要求 BATCH_END。"""
+    if require_batch_end and batch_id is not None:
+        from app.vision_transcribe.browser.generation_guard import text_has_batch_end
+
+        if not text_has_batch_end(md or "", batch_id):
+            return False
     if start_page is None or end_page is None:
         return len((md or "").strip()) >= 2000
     return not looks_truncated_transcript(
@@ -99,7 +144,20 @@ def looks_truncated_transcript(
     )
 
     if start_page is not None and end_page is not None:
-        min_len = min_chars_for_page_span(start_page, end_page)
+        n_batch = end_page - start_page + 1
+        if n_batch == 1:
+            from app.vision_transcribe.capture.page_split import split_pages
+            from app.vision_transcribe.integrity.page_guard import (
+                min_chars_for_single_page,
+            )
+
+            slices = split_pages(t)
+            sl = slices.get(start_page)
+            min_len = min_chars_for_single_page(
+                start_page, body=sl.body if sl else t
+            )
+        else:
+            min_len = min_chars_for_page_span(start_page, end_page)
         if len(t) < min_len:
             return True
         expected = set(range(start_page, end_page + 1))
@@ -129,6 +187,23 @@ def looks_truncated_transcript(
     if markdown_lacks_structure(t) and len(t) < 3500:
         return True
     return False
+
+
+def wait_should_release_to_copy(
+    md: str,
+    *,
+    start_page: int | None = None,
+    end_page: int | None = None,
+) -> bool:
+    """等待阶段 UI 已结束且正文停住：字数够就去复制。
+
+    DOM 常把 ``<!-- PDF2MD:PAGE:… -->`` 收成 HTML 注释抽不到，不能因此空等到超时。
+    PAGE 是否齐交给复制/校验阶段。
+    """
+    t = (md or "").strip()
+    if start_page is None or end_page is None:
+        return len(t) >= 8000
+    return len(t) >= min_chars_for_page_span(start_page, end_page)
 
 
 def pick_best_transcript(

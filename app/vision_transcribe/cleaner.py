@@ -11,7 +11,12 @@ from app.utils.md_postprocess import (
     normalize_display_math_multiline,
 )
 from app.vision_transcribe.manifest import vision_dir
-from app.vision_transcribe.models import BATCH_BEGIN_RE, BATCH_END_RE, PAGE_MARKER_RE
+from app.vision_transcribe.models import (
+    BATCH_BEGIN_RE,
+    BATCH_END_RE,
+    PAGE_END_RE,
+    PAGE_MARKER_RE,
+)
 
 _HR_RE = re.compile(r"(?m)^(?:-{3,}|\*{3,}|_{3,})\s*$")
 _JUNK_IMAGE_LINE = re.compile(r"(?m)^https://image\s*$")
@@ -21,6 +26,7 @@ def clean_vision_markdown(md: str, *, strip_page_markers: bool = True) -> str:
     text = (md or "").replace("\r\n", "\n").replace("\r", "\n")
     text = BATCH_BEGIN_RE.sub("", text)
     text = BATCH_END_RE.sub("", text)
+    text = PAGE_END_RE.sub("", text)
     # 须在去掉 PAGE 标记前修复（FIGURE 占位 / example.com 依赖页码）
     text = repair_vision_markdown_structure(text)
     if strip_page_markers:

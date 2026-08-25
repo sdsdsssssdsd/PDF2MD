@@ -4,12 +4,15 @@ from __future__ import annotations
 import os
 from pathlib import Path
 
-# 与 scripts/run_phase*.py 冻结路径一致
-HF_ROOT = Path(r"${PDF2MD_HF_HOME}")
-DEEPSEEK_MODEL_DIR = Path(
-    r"E:\Ollama\modelscope\models\deepseek-ai--DeepSeek-OCR-2\snapshots\master"
+from app.utils.paths import APP_ROOT
+
+HF_ROOT = Path(
+    os.environ.get("PDF2MD_HF_HOME")
+    or os.environ.get("HF_HOME")
+    or (APP_ROOT / ".cache" / "hf")
 )
-DSOCR2_PYTHON = Path(r"E:\Ollama\venvs\dsocr2\Scripts\python.exe")
+DEEPSEEK_MODEL_DIR = Path(os.environ.get("PDF2MD_DEEPSEEK_MODEL_DIR", ""))
+DSOCR2_PYTHON = Path(os.environ.get("PDF2MD_DSOCR2_PYTHON", ""))
 
 
 def ensure_deepseek_hf_env() -> None:
@@ -22,12 +25,22 @@ def ensure_deepseek_hf_env() -> None:
 
 
 def resolve_deepseek_model_name() -> str:
+    env = os.environ.get("PDF2MD_DEEPSEEK_MODEL_DIR", "").strip()
+    if env:
+        p = Path(env)
+        if p.is_dir():
+            return str(p)
     if DEEPSEEK_MODEL_DIR.is_dir():
         return str(DEEPSEEK_MODEL_DIR)
     return "deepseek-ai/DeepSeek-OCR-2"
 
 
 def resolve_dsocr2_python() -> Path | None:
+    env = os.environ.get("PDF2MD_DSOCR2_PYTHON", "").strip()
+    if env:
+        p = Path(env)
+        if p.is_file():
+            return p
     if DSOCR2_PYTHON.is_file():
         return DSOCR2_PYTHON
     return None

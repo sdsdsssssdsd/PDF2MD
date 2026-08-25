@@ -1,5 +1,5 @@
 # -*- coding: utf-8 -*-
-"""只测 DeepSeek-OCR-2 能否在 GPU 上加载；权重下到 os.environ.get("PDF2MD_HF_HOME", ".cache/hf")。"""
+"""只测 DeepSeek-OCR-2 能否在 GPU 上加载；权重目录见 PDF2MD_HF_HOME。"""
 from __future__ import annotations
 
 import os
@@ -7,19 +7,13 @@ import sys
 import time
 from pathlib import Path
 
-HF_ROOT = Path(r"E:\Ollama\hf-cache")
-HF_ROOT.mkdir(parents=True, exist_ok=True)
-os.environ["HF_HOME"] = str(HF_ROOT)
-os.environ["HUGGINGFACE_HUB_CACHE"] = str(HF_ROOT / "hub")
-os.environ["TRANSFORMERS_CACHE"] = str(HF_ROOT / "transformers")
-os.environ["HF_HUB_DISABLE_SYMLINKS_WARNING"] = "1"
-os.environ["TRANSFORMERS_NO_TF"] = "1"
-os.environ["USE_TF"] = "0"
-
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 
-from app.ocr.deepseek_paths import resolve_deepseek_model_name
+from app.ocr.deepseek_paths import ensure_deepseek_hf_env
+
+ensure_deepseek_hf_env()
+os.environ.setdefault("HF_HUB_DISABLE_SYMLINKS_WARNING", "1")
 
 from PIL import Image  # noqa: E402
 
@@ -29,6 +23,8 @@ from app.ocr.deepseek_ocr2 import DeepSeekOCR2Recognizer  # noqa: E402
 
 def main() -> int:
     DeepSeekOCR2Recognizer.reset_class_model()
+    from app.ocr.deepseek_paths import resolve_deepseek_model_name
+
     local = resolve_deepseek_model_name()
     rec = DeepSeekOCR2Recognizer(
         model_name=local,

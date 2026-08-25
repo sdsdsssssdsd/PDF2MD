@@ -8,19 +8,13 @@ import sys
 import traceback
 from pathlib import Path
 
-HF_ROOT = Path(r"E:\Ollama\hf-cache")
-HF_ROOT.mkdir(parents=True, exist_ok=True)
-os.environ["HF_HOME"] = str(HF_ROOT)
-os.environ["HUGGINGFACE_HUB_CACHE"] = str(HF_ROOT / "hub")
-os.environ["TRANSFORMERS_CACHE"] = str(HF_ROOT / "transformers")
-os.environ.setdefault("TRANSFORMERS_NO_TF", "1")
-os.environ.setdefault("USE_TF", "0")
-os.environ.setdefault("PYTHONIOENCODING", "utf-8")
-
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 
-from app.ocr.deepseek_paths import resolve_deepseek_model_name
+from app.ocr.deepseek_paths import ensure_deepseek_hf_env, resolve_deepseek_model_name
+
+ensure_deepseek_hf_env()
+os.environ.setdefault("PYTHONIOENCODING", "utf-8")
 
 from app.formula.canary_runner import run_canary_batch  # noqa: E402
 

@@ -30,7 +30,7 @@ def main() -> int:
     ap = argparse.ArgumentParser()
     ap.add_argument(
         "--image",
-        default=str(ROOT / "浏览器页面" / "1.png"),
+        default=str(ROOT / "docs" / "images" / "demo-01-pdf-source.png"),
         help="含发送箭头的参考截图",
     )
     args = ap.parse_args()

@@ -2,9 +2,8 @@
 """Phase 5A：Canary 评估种子（冻结识别链路，只做统计）。"""
 from __future__ import annotations
 
-import os
-
 import json
+import os
 import sys
 from pathlib import Path
 

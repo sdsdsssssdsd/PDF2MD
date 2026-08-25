@@ -185,7 +185,7 @@ class VisionDeepSeekUiDialog(QDialog):
 
     def _pick_ref_image(self) -> None:
         path, _ = QFileDialog.getOpenFileName(
-            self, "参考截图", str(APP_ROOT / "浏览器页面"), "Images (*.png *.jpg)"
+            self, "参考截图", str(APP_ROOT / "docs" / "images"), "Images (*.png *.jpg)"
         )
         if not path:
             return

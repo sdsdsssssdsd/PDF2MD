@@ -1,7 +1,7 @@
 # k5 串行评测（从 PP-L 起；PP-M 已完成）
 $ErrorActionPreference = 'Stop'
 $env:PYTHONIOENCODING = 'utf-8'
-Set-Location 'd:\Docling'
+Set-Location $PSScriptRoot\..
 $Lock = 'benchmarks/results/.k5_pipeline.lock'
 if (Test-Path $Lock) {
     $old = Get-Content $Lock -Raw
@@ -10,8 +10,8 @@ if (Test-Path $Lock) {
 New-Item -ItemType Directory -Force -Path (Split-Path $Lock) | Out-Null
 $PID | Set-Content $Lock
 try {
-$Paddle = 'd:\Docling\.venv-paddle-formula\Scripts\python.exe'
-$Py = 'C:\python\python3-12.3\python.exe'
+$Paddle = if ($env:PDF2MD_PADDLE_PYTHON) { $env:PDF2MD_PADDLE_PYTHON } else { 'python' }
+$Py = if ($env:PDF2MD_PYTHON) { $env:PDF2MD_PYTHON } else { 'python' }
 $Gold = 'benchmarks/gold/verified_all.jsonl'
 $Log = "benchmarks/results/k5_pipeline_$(Get-Date -Format 'yyyyMMdd_HHmmss').log"
 

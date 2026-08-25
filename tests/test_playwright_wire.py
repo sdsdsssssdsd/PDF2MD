@@ -13,7 +13,7 @@ from app.vision_transcribe.browser.playwright_session_client import (
 
 
 def test_wire_dumps_windows_path_roundtrip():
-    p = Path(r"D:\Docling\测试集\论文库\foo_高保真\bookfigures\page_0001.png")
+    p = Path("/tmp/pdf2md/sample_高保真/bookfigures/page_0001.png")
     line = _wire_dumps({"cmd": "submit", "images": [p], "prompt": "ok"}) + "\n"
     obj = json.loads(line)
     assert obj["images"][0] == _norm_wire_path(p)
@@ -21,7 +21,7 @@ def test_wire_dumps_windows_path_roundtrip():
 
 
 def test_wire_dumps_survives_subprocess_pipe():
-    p = Path(r"D:\Docling\测试集\论文库\foo_高保真\bookfigures\page_0001.png")
+    p = Path("/tmp/pdf2md/sample_高保真/bookfigures/page_0001.png")
     line = _wire_dumps({"cmd": "submit", "images": [p], "prompt": "test"}) + "\n"
     r = subprocess.run(
         [

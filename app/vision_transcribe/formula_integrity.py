@@ -17,6 +17,9 @@ _NUMBERED_EQ = re.compile(
     re.M,
 )
 
+# 行间公式常用 \\tag{1}（Typora/MathJax），与行末 (n) 等价
+_TAG_EQ = re.compile(r"\\tag\{(\d{1,2})\}")
+
 # 行间 / 裸 LaTeX 公式痕迹
 _MATH_BODY = re.compile(
     r"(?:\$\$[\s\S]+?\$\$|"
@@ -47,12 +50,14 @@ def formula_integrity_errors(md: str) -> list[str]:
             break
 
     nums = [int(x) for x in _NUMBERED_EQ.findall(t)]
+    nums.extend(int(x) for x in _TAG_EQ.findall(t))
     if nums:
-        hi = max(nums)
-        missing = [n for n in range(1, hi) if n not in nums]
+        uniq = sorted(set(nums))
+        hi = max(uniq)
+        missing = [n for n in range(1, hi) if n not in uniq]
         if missing:
             errors.append(
-                f"编号方程式不连续：已有 {sorted(set(nums))}，缺少 {missing}"
+                f"编号方程式不连续：已有 {uniq}，缺少 {missing}"
             )
 
     return errors

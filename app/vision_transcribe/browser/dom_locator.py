@@ -867,6 +867,17 @@ def click_send_robust(
                 return True
             if log:
                 log("[录制回放] 已点发送但未进入生成，继续尝试…")
+            from app.vision_transcribe.browser.deepseek_ui import (
+                click_retry_user_bubble_if_visible,
+            )
+
+            if click_retry_user_bubble_if_visible(page, log=log):
+                attempts.append("retry-user-bubble")
+                time.sleep(0.45)
+                if _verify_send_dispatched(page):
+                    if log:
+                        log("[录制回放] 用户气泡重试后已进入生成")
+                    return True
 
     if anchor is not None:
         cx, cy, _tw, _th = anchor
@@ -894,6 +905,18 @@ def click_send_robust(
         # Enter 有时也延迟生效，再等一轮
         time.sleep(0.6)
         if _verify_send_dispatched(page):
+            return True
+
+    from app.vision_transcribe.browser.deepseek_ui import (
+        click_regenerate_retry_if_visible,
+    )
+
+    if click_regenerate_retry_if_visible(page, log=log):
+        attempts.append("retry-template")
+        time.sleep(0.45)
+        if _verify_send_dispatched(page):
+            if log:
+                log("[录制回放] 图识别重试后已进入生成")
             return True
 
     if log:
@@ -989,7 +1012,49 @@ def click_new_chat_fallback(page, *, log=None) -> bool:
     return False
 
 
+def click_vision_mode_tab(page, *, log=None) -> bool:
+    """点击「识图模式」标签（优先精确匹配，避免误点专家/快速）。"""
+    labels = ("识图模式", "图片理解", "图像理解", "识图")
+    for label in labels:
+        for role in ("tab", "radio", "button"):
+            try:
+                loc = page.get_by_role(role, name=label)
+                for i in range(min(loc.count(), 8)):
+                    el = loc.nth(i)
+                    if not el.is_visible():
+                        continue
+                    box = el.bounding_box()
+                    if not box or float(box.get("width", 0)) < 16:
+                        continue
+                    el.scroll_into_view_if_needed(timeout=3000)
+                    el.click(timeout=8000)
+                    if log:
+                        log(f"[识图模式] 已点击 {role}: {label}")
+                    return True
+            except Exception:
+                continue
+        try:
+            loc = page.get_by_text(label, exact=True)
+            for i in range(min(loc.count(), 10)):
+                el = loc.nth(i)
+                if not el.is_visible():
+                    continue
+                box = el.bounding_box()
+                if not box or float(box.get("width", 0)) < 16:
+                    continue
+                el.scroll_into_view_if_needed(timeout=3000)
+                el.click(timeout=8000)
+                if log:
+                    log(f"[识图模式] 已点击文本: {label}")
+                return True
+        except Exception:
+            continue
+    return False
+
+
 def click_vision_mode_fallback(page, *, log=None) -> bool:
+    if click_vision_mode_tab(page, log=log):
+        return True
     labels = ("识图模式", "专家模式", "快速模式")
     visible: list[tuple[float, object]] = []
     for label in labels:

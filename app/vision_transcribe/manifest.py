@@ -10,7 +10,7 @@ from app.vision_transcribe.models import BatchInfo, BatchStatus, PageInfo, Pipel
 from app.vision_transcribe.prompts import PROMPT_VERSION
 
 
-MANIFEST_VERSION = 1
+MANIFEST_VERSION = 2
 
 
 @dataclass
@@ -117,6 +117,60 @@ class VisionManifest:
         batches = self.get_batches()
         return bool(batches) and all(b.status == BatchStatus.ACCEPTED.value for b in batches)
 
+    def record_batch_acceptance(
+        self,
+        batch_id: int,
+        raw_md: str,
+        output_dir: Path,
+        *,
+        extract_stats: dict | None = None,
+    ) -> None:
+        """manifest v2：记录批次 accepted 元数据（逐页 chars / 来源 / 尝试次数）。"""
+        from app.vision_transcribe.capture.page_split import split_pages
+
+        stats = dict(extract_stats or {})
+        attempts_dir = batch_dir(output_dir, batch_id) / "attempts"
+        attempt_n = 0
+        if attempts_dir.is_dir():
+            attempt_n = len(list(attempts_dir.glob("attempt_*")))
+
+        stable = bool(stats.get("copy_consensus_stable"))
+        source = str(stats.get("source") or stats.get("copy_consensus_label") or "")
+        confidence = "high" if stable else "medium"
+
+        for b in self.batches:
+            if int(b["id"]) != batch_id:
+                continue
+            start_p = int(b["start_page"])
+            end_p = int(b["end_page"])
+            slices = split_pages(raw_md)
+            pages_meta: dict[str, dict] = {}
+            for p in range(start_p, end_p + 1):
+                sl = slices.get(p)
+                if sl is None:
+                    pages_meta[str(p)] = {
+                        "status": "missing",
+                        "chars": 0,
+                        "source": source,
+                        "confidence": "low",
+                    }
+                else:
+                    pages_meta[str(p)] = {
+                        "status": "accepted",
+                        "chars": sl.chars,
+                        "has_end": sl.has_end,
+                        "source": source,
+                        "confidence": confidence if sl.chars >= 200 else "low",
+                    }
+            b["attempt_count"] = attempt_n
+            b["accepted_attempt"] = attempt_n if attempt_n else 1
+            b["failure_class"] = str(stats.get("capture_failure_class") or "")
+            b["confidence"] = confidence
+            b["extract_source"] = source
+            b["pages"] = pages_meta
+            break
+        self.version = max(int(self.version), MANIFEST_VERSION)
+
 
 def vision_dir(output_dir: Path) -> Path:
     return output_dir / ".vision"
@@ -140,6 +194,25 @@ def load_manifest(output_dir: Path) -> VisionManifest | None:
         return None
     data = json.loads(path.read_text(encoding="utf-8"))
     return VisionManifest.from_dict(data)
+
+
+def should_force_vision_rerun(
+    output_dir: Path | None,
+    *,
+    checkbox: bool = False,
+    task_was_done: bool = False,
+) -> bool:
+    """点「转换」时是否整篇重跑浏览器。
+
+    已完成（任务 Done 或目录内批次已全部 accepted）默认 True；
+    未完成则仅当勾选「强制重跑」才丢掉已接受批次。
+    """
+    if checkbox or task_was_done:
+        return True
+    if output_dir is None:
+        return False
+    m = load_manifest(output_dir)
+    return bool(m and m.all_batches_accepted())
 
 
 def save_manifest(output_dir: Path, manifest: VisionManifest) -> Path:

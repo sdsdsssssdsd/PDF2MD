@@ -31,6 +31,9 @@ jobs:
       - name: compileall
         run: python -m compileall -q app tests
 
+      - name: Privacy scan (no local paths / secrets)
+        run: python scripts/check_github_submit_privacy.py
+
       - name: pytest
         run: python -m pytest -q
         env:

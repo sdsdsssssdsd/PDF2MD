@@ -3,7 +3,7 @@
 
 用法：
   python scripts/calibrate_deepseek_ui.py
-  python scripts/calibrate_deepseek_ui.py --image "D:\\Docling\\浏览器页面\\1.png"
+  python scripts/calibrate_deepseek_ui.py --image docs/images/demo-01-pdf-source.png
 
 在窗口里依次点击：
   1. 识图模式（三按钮最右）
@@ -38,7 +38,7 @@ def main() -> int:
     ap = argparse.ArgumentParser()
     ap.add_argument(
         "--image",
-        default=str(ROOT / "浏览器页面" / "1.png"),
+        default=str(ROOT / "docs" / "images" / "demo-01-pdf-source.png"),
         help="参考截图路径",
     )
     args = ap.parse_args()

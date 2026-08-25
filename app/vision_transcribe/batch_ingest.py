@@ -50,8 +50,8 @@ def read_raw_response(output_dir: Path, batch_id: int) -> str | None:
     return path.read_text(encoding="utf-8")
 
 
-def clear_batch_artifacts(output_dir: Path, batch_id: int) -> None:
-    """重跑前清掉旧批次回答，避免 resume 误读脏数据。"""
+def clear_batch_response_only(output_dir: Path, batch_id: int) -> None:
+    """全量重提时清回答产物，保留 attempts/ 证据。"""
     d = batch_dir(output_dir, batch_id)
     if not d.is_dir():
         return
@@ -59,3 +59,8 @@ def clear_batch_artifacts(output_dir: Path, batch_id: int) -> None:
         p = d / name
         if p.is_file():
             p.unlink()
+
+
+def clear_batch_artifacts(output_dir: Path, batch_id: int) -> None:
+    """重跑前清掉旧批次回答（保留 attempts/ 诊断证据）。"""
+    clear_batch_response_only(output_dir, batch_id)

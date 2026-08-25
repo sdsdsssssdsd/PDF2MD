@@ -56,6 +56,9 @@ def validate_batch_markdown(
     *,
     start_page: int,
     end_page: int,
+    batch_id: int = 0,
+    output_dir: Path | None = None,
+    prompt_version: str = "",
 ) -> ValidationResult:
     errors: list[str] = []
     warnings: list[str] = []
@@ -83,6 +86,13 @@ def validate_batch_markdown(
     errors.extend(_math_fence_ok(md or ""))
 
     try:
+        from app.vision_transcribe.transcript_quality import model_degeneration_errors
+
+        errors.extend(model_degeneration_errors(md or ""))
+    except Exception:
+        pass
+
+    try:
         from app.vision_transcribe.formula_integrity import formula_integrity_errors
 
         errors.extend(formula_integrity_errors(md or ""))
@@ -90,34 +100,56 @@ def validate_batch_markdown(
         pass
 
     try:
+        from app.vision_transcribe.integrity.page_guard import validate_page_integrity
         from app.vision_transcribe.transcript_quality import (
             is_references_heavy,
             looks_truncated_transcript,
-            min_chars_for_page_span,
         )
         from app.vision_transcribe.vision_structure_repair import markdown_lacks_structure
 
+        pg_errs, pg_warns, _slices = validate_page_integrity(
+            md or "",
+            start_page=start_page,
+            end_page=end_page,
+            batch_id=batch_id,
+            output_dir=output_dir,
+            prompt_version=prompt_version,
+        )
+        errors.extend(pg_errs)
+        warnings.extend(pg_warns)
+
         n_pages = end_page - start_page + 1
-        min_len = min_chars_for_page_span(start_page, end_page)
-        if len((md or "").strip()) < min_len:
-            errors.append(
-                f"批次过短（{len((md or '').strip())} 字，"
-                f"{n_pages} 页期望 ≥{min_len}）"
-            )
-        elif looks_truncated_transcript(
+        if looks_truncated_transcript(
             md or "", start_page=start_page, end_page=end_page
         ):
-            errors.append("内容与页数不匹配或复制截断")
+            if not any("过短" in e or "SourceGuard" in e for e in errors):
+                errors.append("内容与页数不匹配或复制截断")
         elif (
             n_pages == 1
             and markdown_lacks_structure(md or "")
             and not is_references_heavy(md or "")
-            and len((md or "").strip()) < min_len * 2
         ):
-            errors.append(
-                "Markdown 结构缺失（复制压平：无 # 标题 / | 表格 |），"
-                "须完整保留 DeepSeek 回答"
+            from app.vision_transcribe.capture.page_split import split_pages
+            from app.vision_transcribe.integrity.page_guard import (
+                is_figure_heavy_page,
+                is_reference_page_body,
+                min_chars_for_single_page,
             )
+
+            slices = split_pages(md or "")
+            sl = slices.get(start_page)
+            body = sl.body if sl else (md or "")
+            if not (
+                is_figure_heavy_page(body)
+                or is_reference_page_body(body)
+                or is_references_heavy(body)
+            ):
+                min_len = min_chars_for_single_page(start_page, body=body)
+                if len((md or "").strip()) < min_len * 2:
+                    errors.append(
+                        "Markdown 结构缺失（复制压平：无 # 标题 / | 表格 |），"
+                        "须完整保留 DeepSeek 回答"
+                    )
     except Exception:
         pass
 
@@ -161,8 +193,19 @@ def validate_and_write(
     *,
     start_page: int,
     end_page: int,
+    prompt_version: str = "",
 ) -> ValidationResult:
-    result = validate_batch_markdown(md, start_page=start_page, end_page=end_page)
+    from app.vision_transcribe.prompts import PROMPT_VERSION
+
+    pv = prompt_version or PROMPT_VERSION
+    result = validate_batch_markdown(
+        md,
+        start_page=start_page,
+        end_page=end_page,
+        batch_id=batch_id,
+        output_dir=output_dir,
+        prompt_version=pv,
+    )
     d = batch_dir(output_dir, batch_id)
     d.mkdir(parents=True, exist_ok=True)
     (d / "validation.json").write_text(

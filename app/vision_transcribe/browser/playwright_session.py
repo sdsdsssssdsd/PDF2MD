@@ -84,9 +84,38 @@ def main() -> int:
                     continue
                 msg = {"cmd": "submit", **pending}
                 cmd = "submit"
+            if cmd == "recopy":
+                prompt = msg.get("prompt") or ""
+                if msg.get("output_dir") and msg.get("batch_id") is not None:
+                    adapter.set_capture_context(
+                        Path(str(msg["output_dir"])), int(msg["batch_id"])
+                    )
+                result = adapter.recopy_batch(prompt)
+                if result.needs_user:
+                    _emit(
+                        {
+                            "ok": False,
+                            "needs_user": True,
+                            "message": result.message or "需要登录/验证",
+                        }
+                    )
+                    continue
+                _emit(
+                    {
+                        "ok": True,
+                        "needs_user": False,
+                        "markdown": result.markdown,
+                        "extract_stats": result.extract_stats,
+                    }
+                )
+                continue
             if cmd == "submit":
                 images = [Path(p) for p in msg.get("images") or []]
                 prompt = msg.get("prompt") or ""
+                if msg.get("output_dir") and msg.get("batch_id") is not None:
+                    adapter.set_capture_context(
+                        Path(str(msg["output_dir"])), int(msg["batch_id"])
+                    )
                 pending = {"images": [str(p) for p in images], "prompt": prompt}
                 result = adapter.submit_batch(images, prompt)
                 if result.needs_user:
@@ -110,6 +139,18 @@ def main() -> int:
                 continue
             _emit({"ok": False, "error": f"unknown cmd: {cmd}"})
         except Exception as e:
+            from app.vision_transcribe.browser.base import ServerBusyCooldownError
+
+            if isinstance(e, ServerBusyCooldownError):
+                _emit(
+                    {
+                        "ok": False,
+                        "server_busy": True,
+                        "cooldown_seconds": e.cooldown_seconds,
+                        "error": str(e),
+                    }
+                )
+                continue
             _emit(
                 {
                     "ok": False,

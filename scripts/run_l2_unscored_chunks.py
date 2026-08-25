@@ -10,7 +10,11 @@ import sys
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
-PY_DS = Path(r"E:\Ollama\venvs\dsocr2\Scripts\python.exe")
+sys.path.insert(0, str(ROOT))
+
+from app.ocr.deepseek_paths import resolve_dsocr2_python
+
+PY_DS = resolve_dsocr2_python() or Path(sys.executable)
 GOLD = ROOT / "benchmarks" / "gold" / "verified_unscored.jsonl"
 OUT_DIR = ROOT / "benchmarks" / "results"
 

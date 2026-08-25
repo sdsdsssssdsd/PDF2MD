@@ -1,5 +1,5 @@
 # -*- coding: utf-8 -*-
-"""真实 DeepSeek-OCR 2 benchmark；权重缓存在 os.environ.get("PDF2MD_HF_HOME", ".cache/hf")。"""
+"""真实 DeepSeek-OCR 2 benchmark；权重缓存在 PDF2MD_HF_HOME 或 .cache/hf。"""
 from __future__ import annotations
 
 import json
@@ -8,20 +8,13 @@ import sys
 import traceback
 from pathlib import Path
 
-# 必须在 import transformers / huggingface 之前设置
-HF_ROOT = Path(r"E:\Ollama\hf-cache")
-HF_ROOT.mkdir(parents=True, exist_ok=True)
-os.environ["HF_HOME"] = str(HF_ROOT)
-os.environ["HUGGINGFACE_HUB_CACHE"] = str(HF_ROOT / "hub")
-os.environ["TRANSFORMERS_CACHE"] = str(HF_ROOT / "transformers")
-os.environ.setdefault("TRANSFORMERS_NO_TF", "1")
-os.environ.setdefault("USE_TF", "0")
-os.environ.setdefault("PYTHONIOENCODING", "utf-8")
-
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 
-from app.ocr.deepseek_paths import resolve_deepseek_model_name
+from app.ocr.deepseek_paths import ensure_deepseek_hf_env, resolve_deepseek_model_name
+
+ensure_deepseek_hf_env()
+os.environ.setdefault("PYTHONIOENCODING", "utf-8")
 
 from app.ocr.deepseek_benchmark import (  # noqa: E402
     DeepSeekBenchmarkConfig,
@@ -32,11 +25,8 @@ from app.utils.paths import BENCHMARK_RUNS  # noqa: E402
 
 
 def main() -> int:
-    pdfs = list(
-        Path(os.environ.get("PDF2MD_BENCH_ROOT") or (ROOT / "input")).rglob(
-            "O-018_Abdo2025_Stacking_SHAP.pdf"
-        )
-    )
+    bench = Path(os.environ.get("PDF2MD_BENCH_ROOT") or (ROOT / "input"))
+    pdfs = list(bench.rglob("O-018_Abdo2025_Stacking_SHAP.pdf"))
     if not pdfs:
         print("PDF not found", flush=True)
         return 2
