@@ -5,7 +5,7 @@ build-backend = "setuptools.build_meta"
 [project]
 name = "pdf2md"
 version = "0.1.0a0"
-description = "Windows desktop GUI: academic PDF to Markdown via Lean Docling + DeepSeek-OCR formula recovery"
+description = "Windows desktop GUI: academic PDF to Markdown via Lean Docling + DeepSeek-OCR formula recovery + DeepSeek web vision fidelity mode"
 readme = "README.md"
 requires-python = ">=3.10"
 license = { text = "Apache-2.0" }

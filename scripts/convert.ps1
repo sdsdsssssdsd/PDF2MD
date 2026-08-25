@@ -8,15 +8,12 @@ param(
 $ErrorActionPreference = "Stop"
 $Root = Split-Path -Parent $PSScriptRoot
 if (-not (Test-Path (Join-Path $Root "input"))) {
-    $Root = $PSScriptRoot
-    if (-not (Test-Path (Join-Path $Root "input"))) {
-        $Root = "X:\ExampleProject"
-    }
+    Write-Error "input directory not found under $Root"
 }
 
-$Python = "python"
-$Docling = "docling"
-$MinerU = "mineru"
+$Python = if ($env:PDF2MD_PYTHON) { $env:PDF2MD_PYTHON } else { "python" }
+$Docling = if ($env:PDF2MD_DOCLING_EXE) { $env:PDF2MD_DOCLING_EXE } else { "docling" }
+$MinerU = if ($env:PDF2MD_MINERU_EXE) { $env:PDF2MD_MINERU_EXE } else { "mineru" }
 $InputDir = Join-Path $Root "input"
 if (-not $OutputDir) {
     $OutputDir = Join-Path $Root "output"

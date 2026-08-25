@@ -8,6 +8,7 @@ from pathlib import Path
 
 
 PAGE_MARKER_RE = re.compile(r"<!--\s*PDF2MD:PAGE:(\d{4})\s*-->")
+PAGE_END_RE = re.compile(r"<!--\s*PDF2MD:PAGE_END:(\d{4})\s*-->")
 FIGURE_MARKER_RE = re.compile(r"<!--\s*PDF2MD:FIGURE:p(\d{4}):f(\d{2})\s*-->")
 BATCH_BEGIN_RE = re.compile(r"<!--\s*PDF2MD:BATCH_BEGIN:(\d{4})\s*-->")
 BATCH_END_RE = re.compile(r"<!--\s*PDF2MD:BATCH_END:(\d{4})\s*-->")
@@ -81,6 +82,14 @@ class ValidationResult:
 
 def page_marker(page: int) -> str:
     return f"<!-- PDF2MD:PAGE:{page:04d} -->"
+
+
+def page_end_marker(page: int) -> str:
+    return f"<!-- PDF2MD:PAGE_END:{page:04d} -->"
+
+
+def batch_end_marker(batch_id: int) -> str:
+    return f"<!-- PDF2MD:BATCH_END:{batch_id:04d} -->"
 
 
 def figure_marker(page: int, fig_index: int) -> str:

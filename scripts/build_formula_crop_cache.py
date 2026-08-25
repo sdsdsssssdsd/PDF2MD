@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
-"""从 formula_qa + 测试集/OULAD PDF 固化 crop（k5 §28.5）。"""
+"""Build formula crop cache from formula_qa + benchmark PDFs (k5 §28.5)."""
 from __future__ import annotations
 
 import argparse

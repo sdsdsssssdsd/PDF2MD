@@ -277,10 +277,76 @@ def test_click_continue_generate_dom():
     page = MagicMock()
     btn = MagicMock()
     btn.count.return_value = 1
-    btn.first.is_visible.return_value = True
-    page.get_by_text.return_value = btn
+    btn.nth.return_value.is_visible.return_value = True
+    page.get_by_role.return_value = btn
+    page.get_by_text.return_value = MagicMock(count=MagicMock(return_value=0))
+    page.locator.return_value = MagicMock(count=MagicMock(return_value=0))
     assert click_continue_generate_if_visible(page, log=MagicMock())
-    btn.first.click.assert_called_once()
+    btn.nth.return_value.click.assert_called_once()
+
+
+def test_click_regenerate_retry_dom():
+    from unittest.mock import MagicMock
+
+    from app.vision_transcribe.browser.deepseek_ui import (
+        click_regenerate_retry_if_visible,
+    )
+
+    page = MagicMock()
+    btn = MagicMock()
+    btn.count.return_value = 1
+    btn.nth.return_value.is_visible.return_value = True
+    page.get_by_role.return_value = btn
+    page.get_by_text.return_value = MagicMock(count=MagicMock(return_value=0))
+    page.locator.return_value = MagicMock(count=MagicMock(return_value=0))
+    page.evaluate.return_value = False
+    assert click_regenerate_retry_if_visible(page, log=MagicMock())
+    btn.nth.return_value.click.assert_called_once()
+
+
+def test_click_regenerate_retry_template_fallback():
+    from unittest.mock import MagicMock, patch
+
+    from app.vision_transcribe.browser.deepseek_ui import (
+        click_regenerate_retry_if_visible,
+        is_regenerate_retry_visible,
+    )
+
+    page = MagicMock()
+    page.get_by_role.return_value = MagicMock(count=MagicMock(return_value=0))
+    page.get_by_text.return_value = MagicMock(count=MagicMock(return_value=0))
+    page.locator.return_value = MagicMock(count=MagicMock(return_value=0))
+    page.evaluate.return_value = False
+    with patch(
+        "app.vision_transcribe.browser.deepseek_ui.is_retry_template_visible",
+        return_value=True,
+    ):
+        assert is_regenerate_retry_visible(page)
+    with patch(
+        "app.vision_transcribe.browser.deepseek_ui.click_retry_template_if_visible",
+        return_value=True,
+    ) as click_tpl:
+        assert click_regenerate_retry_if_visible(page, log=MagicMock())
+        click_tpl.assert_called_once()
+
+
+def test_continue_visible_dom_skips_template():
+    from unittest.mock import MagicMock, patch
+
+    from app.vision_transcribe.browser.deepseek_ui import is_continue_generate_visible
+
+    page = MagicMock()
+    page.get_by_role.return_value = MagicMock(count=MagicMock(return_value=0))
+    page.get_by_text.return_value = MagicMock(count=MagicMock(return_value=0))
+    page.locator.return_value = MagicMock(count=MagicMock(return_value=0))
+    with patch(
+        "app.vision_transcribe.browser.deepseek_ui.is_template_visible",
+        return_value=True,
+    ) as tpl:
+        assert not is_continue_generate_visible(page, allow_template=False)
+        tpl.assert_not_called()
+        assert is_continue_generate_visible(page, allow_template=True)
+        tpl.assert_called_once()
 
 
 def test_fill_batch_prompt_uses_vision_mode_placeholder():
@@ -303,3 +369,55 @@ def test_fill_batch_prompt_uses_vision_mode_placeholder():
     page.get_by_placeholder.side_effect = _placeholder
     assert fill_batch_prompt(page, "请转录以下页面，保持公式与表格")
     vision_ph.first.fill.assert_called_once()
+
+
+def test_upload_guard_stacked_thumbnail_with_send_ready():
+    from unittest.mock import MagicMock
+
+    from app.vision_transcribe.browser.upload_guard import verify_upload_complete
+
+    page = MagicMock()
+    page.evaluate.return_value = 1
+    ok, _ = verify_upload_complete(
+        page, 10, log=None, timeout_ms=200, poll_ms=50, send_ready=True
+    )
+    assert ok
+
+
+def test_smart_click_recorded_strategy_uses_dom():
+    from unittest.mock import MagicMock
+
+    from app.vision_transcribe.browser.deepseek_ui import smart_click
+
+    page = MagicMock()
+    dom_hits: list[bool] = []
+
+    def dom_fn(_fs, _optional):
+        dom_hits.append(True)
+        return True
+
+    assert smart_click(
+        page,
+        "vision_mode",
+        dom_factories=[],
+        config={"click_strategy": "recorded"},
+        dom_click_fn=dom_fn,
+    )
+    assert dom_hits
+
+
+def test_click_vision_mode_tab_prefers_exact_label():
+    from unittest.mock import MagicMock
+
+    from app.vision_transcribe.browser.dom_locator import click_vision_mode_tab
+
+    page = MagicMock()
+    tab = MagicMock()
+    tab.count.return_value = 1
+    tab.nth.return_value.is_visible.return_value = True
+    tab.nth.return_value.bounding_box.return_value = {"width": 80, "height": 32}
+    page.get_by_role.return_value = tab
+    page.get_by_text.return_value = MagicMock(count=MagicMock(return_value=0))
+
+    assert click_vision_mode_tab(page)
+    tab.nth.return_value.click.assert_called_once()

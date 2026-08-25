@@ -10,7 +10,12 @@ import time
 from pathlib import Path
 
 from app.utils.paths import APP_ROOT, PYTHON_EXE
-from app.vision_transcribe.browser.base import AdapterResult, VisionWebAdapter
+from app.vision_transcribe.browser.base import (
+    AdapterResult,
+    ServerBusyCooldownError,
+    VisionWebAdapter,
+    server_busy_from_response,
+)
 from app.vision_transcribe.browser.profile_utils import (
     clear_stale_profile_locks,
     kill_profile_chromium,
@@ -52,7 +57,12 @@ class PlaywrightSessionClient(VisionWebAdapter):
         self._proc: subprocess.Popen | None = None
         self._out_q: queue.Queue[str | None] = queue.Queue()
         self._reader: threading.Thread | None = None
-        self._stderr_chunks: list[str] = []
+        self._capture_output_dir: Path | None = None
+        self._capture_batch_id: int | None = None
+
+    def set_capture_context(self, output_dir: Path, batch_id: int) -> None:
+        self._capture_output_dir = Path(output_dir)
+        self._capture_batch_id = int(batch_id)
 
     def start(self) -> None:
         if self._proc is not None and self._proc.poll() is None:
@@ -149,13 +159,15 @@ class PlaywrightSessionClient(VisionWebAdapter):
     def submit_batch(self, images: list[Path], prompt: str) -> AdapterResult:
         self.start()
         self._log(f"[PW] 提交本批：{len(images)} 张图")
-        self._send(
-            {
-                "cmd": "submit",
-                "images": images,
-                "prompt": prompt,
-            }
-        )
+        payload: dict = {
+            "cmd": "submit",
+            "images": images,
+            "prompt": prompt,
+        }
+        if self._capture_output_dir is not None and self._capture_batch_id is not None:
+            payload["output_dir"] = _norm_wire_path(self._capture_output_dir)
+            payload["batch_id"] = self._capture_batch_id
+        self._send(payload)
         # 识图可能很久；期间持续转发子进程 log
         resp = self._recv(timeout=600.0)
         if resp is None:
@@ -170,8 +182,47 @@ class PlaywrightSessionClient(VisionWebAdapter):
                 needs_user=True,
                 message=str(resp.get("message") or "需要登录/验证"),
             )
+        busy = server_busy_from_response(resp)
+        if busy is not None:
+            raise busy
         if not resp.get("ok"):
             raise RuntimeError(str(resp.get("error") or resp))
+        return AdapterResult(
+            markdown=str(resp.get("markdown") or ""),
+            needs_user=False,
+            extract_stats=resp.get("extract_stats")
+            if isinstance(resp.get("extract_stats"), dict)
+            else None,
+        )
+
+    def recopy_batch(self, prompt: str) -> AdapterResult:
+        """Level-0：不重新上传，仅重新 Capture。"""
+        self.start()
+        self._log("[PW] Level-0 仅重新抽取…")
+        payload: dict = {"cmd": "recopy", "prompt": prompt}
+        if self._capture_output_dir is not None and self._capture_batch_id is not None:
+            payload["output_dir"] = _norm_wire_path(self._capture_output_dir)
+            payload["batch_id"] = self._capture_batch_id
+        self._send(payload)
+        resp = self._recv(timeout=120.0)
+        if resp is None:
+            return AdapterResult(
+                markdown="",
+                needs_user=False,
+                message=self._stderr_tail() or "子进程无响应",
+            )
+        if resp.get("needs_user"):
+            return AdapterResult(
+                markdown="",
+                needs_user=True,
+                message=str(resp.get("message") or "需要登录/验证"),
+            )
+        if not resp.get("ok"):
+            return AdapterResult(
+                markdown="",
+                needs_user=False,
+                message=str(resp.get("error") or resp),
+            )
         return AdapterResult(
             markdown=str(resp.get("markdown") or ""),
             needs_user=False,
@@ -193,6 +244,9 @@ class PlaywrightSessionClient(VisionWebAdapter):
                 needs_user=True,
                 message=str(resp.get("message") or "仍需人工处理"),
             )
+        busy = server_busy_from_response(resp)
+        if busy is not None:
+            raise busy
         if not resp.get("ok"):
             raise RuntimeError(str(resp.get("error") or resp))
         return AdapterResult(

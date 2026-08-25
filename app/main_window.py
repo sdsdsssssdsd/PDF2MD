@@ -250,7 +250,9 @@ class MainWindow(QMainWindow):
         self.vision_card.body.addLayout(vision_row)
         self.cb_vision_force_rerun = QCheckBox("强制重跑浏览器转录")
         self.cb_vision_force_rerun.setToolTip(
-            "勾选后即使批次已全部完成，也会重置并重新提交 DeepSeek 识图"
+            "已完成的任务再次点「转换」默认就会整篇重跑，不必勾选。"
+            "未完成但已有 accepted 批次时，勾选才会丢掉已接受结果从头转；"
+            "不勾选则断点续跑。仅重合并/裁图请用右键。"
         )
         force_row = QHBoxLayout()
         force_row.addWidget(self.cb_vision_force_rerun)
@@ -1052,7 +1054,16 @@ class MainWindow(QMainWindow):
     def _start(self) -> None:
         if self._worker and self._worker.isRunning():
             return
-        waiting = [t for t in self._tasks.values() if t.status in (TaskStatus.WAITING.value, TaskStatus.FAILED.value)]
+        waiting = [
+            t
+            for t in self._tasks.values()
+            if t.status
+            in (
+                TaskStatus.WAITING.value,
+                TaskStatus.FAILED.value,
+                TaskStatus.DONE.value,
+            )
+        ]
         if not waiting:
             QMessageBox.information(self, "提示", "没有待转换的 PDF。请先拖入文件。")
             return
@@ -1076,14 +1087,27 @@ class MainWindow(QMainWindow):
         # 更新工作流 / 引擎到任务
         eng = self._current_engine()
         wf = self._current_workflow()
+        from app.utils.paths import vision_task_output_dir
+        from app.vision_transcribe.manifest import should_force_vision_rerun
+
         for t in waiting:
-            if t.status in (TaskStatus.WAITING.value, TaskStatus.FAILED.value):
+            was_done = t.status == TaskStatus.DONE.value
+            if t.status in (
+                TaskStatus.WAITING.value,
+                TaskStatus.FAILED.value,
+                TaskStatus.DONE.value,
+            ):
                 t.workflow = wf
                 t.engine = eng
                 t.status = TaskStatus.WAITING.value
                 t.error = ""
                 if wf == WorkflowChoice.VISION.value:
-                    t.vision_force_rerun = self.cb_vision_force_rerun.isChecked()
+                    vis_out = vision_task_output_dir(out_root, t.pdf_path)
+                    t.vision_force_rerun = should_force_vision_rerun(
+                        vis_out,
+                        checkbox=self.cb_vision_force_rerun.isChecked(),
+                        task_was_done=was_done,
+                    )
                 else:
                     t.vision_force_rerun = False
 
@@ -1386,9 +1410,22 @@ class MainWindow(QMainWindow):
         if chosen == act_err:
             QMessageBox.warning(self, "错误信息", t.error or "无错误信息")
         elif chosen == act_retry:
+            was_done = t.status == TaskStatus.DONE.value
             t.status = TaskStatus.WAITING.value
             t.error = ""
-            t.vision_force_rerun = False
+            if getattr(t, "workflow", "") == WorkflowChoice.VISION.value:
+                from app.utils.paths import vision_task_output_dir
+                from app.vision_transcribe.manifest import should_force_vision_rerun
+
+                out_root = Path(self.output_edit.text().strip() or ".")
+                vis_out = t.output_dir or vision_task_output_dir(out_root, t.pdf_path)
+                t.vision_force_rerun = should_force_vision_rerun(
+                    vis_out,
+                    checkbox=self.cb_vision_force_rerun.isChecked(),
+                    task_was_done=was_done,
+                )
+            else:
+                t.vision_force_rerun = False
             row = self._row_of(t.id)
             if row >= 0:
                 self._refresh_row(row, t)

@@ -536,6 +536,17 @@ def wait_for_send_blue_ready(
 
     while time.monotonic() < deadline:
         try:
+            from app.vision_transcribe.browser.upload_guard import (
+                raise_if_upload_server_busy,
+            )
+
+            raise_if_upload_server_busy(page, log=log)
+        except Exception as e:
+            from app.vision_transcribe.browser.base import ServerBusyCooldownError
+
+            if isinstance(e, ServerBusyCooldownError):
+                raise
+        try:
             from app.vision_transcribe.browser.dom_locator import is_send_button_ready
 
             if is_send_button_ready(page):
@@ -889,6 +900,7 @@ def is_continue_generate_visible(
     page,
     *,
     config: dict | None = None,
+    allow_template: bool = True,
 ) -> bool:
     """页面上是否仍显示「继续生成」（未完成则不应点复制）。"""
     cfg = config or load_ui_config()
@@ -903,7 +915,170 @@ def is_continue_generate_visible(
                 return True
         except Exception:
             continue
-    return is_template_visible(page, "continue_gen", config=cfg)
+    if allow_template:
+        return is_template_visible(page, "continue_gen", config=cfg)
+    return False
+
+
+_RETRY_TEMPLATE_KEYS: tuple[str, ...] = ("retry_user_bubble", "retry_response")
+
+_UPLOAD_SERVER_BUSY_TEMPLATE_KEYS: tuple[str, ...] = (
+    "upload_server_busy",
+    "upload_server_busy_text",
+)
+
+
+def is_upload_server_busy_template_visible(
+    page,
+    *,
+    config: dict | None = None,
+    log=None,
+) -> tuple[bool, str]:
+    """图识别 L2：附件缩略图「服务器繁忙」叠层（DOM 未命中时的二层保险）。"""
+    cfg = config or load_ui_config()
+    for key in _UPLOAD_SERVER_BUSY_TEMPLATE_KEYS:
+        if is_template_visible(page, key, config=cfg):
+            hint = f"图模板 {key}"
+            if log:
+                log(f"[UploadGuard L2] 服务器繁忙模板命中: {key}")
+            return True, hint
+    return False, ""
+
+
+def is_retry_template_visible(
+    page,
+    *,
+    config: dict | None = None,
+    log=None,
+) -> bool:
+    """图识别 L2：用户气泡橙色重试 / 回答操作栏重试。"""
+    cfg = config or load_ui_config()
+    for key in _RETRY_TEMPLATE_KEYS:
+        if is_template_visible(page, key, config=cfg):
+            if log:
+                log(f"[UI L2] 重试图标模板命中: {key}")
+            return True
+    return False
+
+
+def click_retry_template_if_visible(
+    page,
+    *,
+    config: dict | None = None,
+    log=None,
+) -> bool:
+    cfg = config or load_ui_config()
+    for key in _RETRY_TEMPLATE_KEYS:
+        if not is_template_visible(page, key, config=cfg):
+            continue
+        if click_by_template(page, key, config=cfg, log=log):
+            if log:
+                log(f"[UI L2] 已点击「重试」（图模板 {key}）")
+            return True
+    return False
+
+
+def click_retry_user_bubble_if_visible(
+    page,
+    *,
+    config: dict | None = None,
+    log=None,
+) -> bool:
+    """用户气泡橙色圆形「重试」（发送点了但未进入生成时常出现）。"""
+    cfg = config or load_ui_config()
+    if not is_template_visible(page, "retry_user_bubble", config=cfg):
+        return False
+    if click_by_template(page, "retry_user_bubble", config=cfg, log=log):
+        if log:
+            log("[UI L2] 已点击「重试」（用户气泡图模板）")
+        return True
+    return False
+
+
+def is_regenerate_retry_visible(
+    page,
+    *,
+    config: dict | None = None,
+    allow_template: bool = True,
+) -> bool:
+    """DeepSeek 生成失败时的「重试」（文字钮或操作栏图标）。"""
+    cfg = config or load_ui_config()
+    for factory in (
+        lambda: page.get_by_role("button", name="重试"),
+        lambda: page.get_by_role("button", name="Retry"),
+        lambda: page.get_by_text("重试", exact=True),
+        lambda: page.get_by_text("Retry", exact=True),
+        lambda: page.locator("button", has_text="重试"),
+        lambda: page.locator("button", has_text="Retry"),
+        lambda: page.locator('[aria-label*="重试"]'),
+        lambda: page.locator('[aria-label*="Retry" i]'),
+        lambda: page.locator('[title*="重试"]'),
+        lambda: page.locator('[title*="Retry" i]'),
+    ):
+        try:
+            loc = factory()
+            n = loc.count()
+            for i in range(n - 1, -1, -1):
+                if loc.nth(i).is_visible():
+                    return True
+        except Exception:
+            continue
+    try:
+        if page.evaluate(_IS_REGENERATE_RETRY_VISIBLE_JS):
+            return True
+    except Exception:
+        pass
+    if allow_template:
+        return is_retry_template_visible(page, config=cfg)
+    return False
+
+
+def click_regenerate_retry_if_visible(
+    page,
+    *,
+    config: dict | None = None,
+    log=None,
+    allow_template: bool = True,
+) -> bool:
+    """若出现「重试」则点击（DOM 优先，操作栏图标 JS，图模板兜底）。"""
+    cfg = config or load_ui_config()
+    for factory in (
+        lambda: page.get_by_role("button", name="重试"),
+        lambda: page.get_by_role("button", name="Retry"),
+        lambda: page.get_by_text("重试", exact=True),
+        lambda: page.get_by_text("Retry", exact=True),
+        lambda: page.locator("button", has_text="重试"),
+        lambda: page.locator("button", has_text="Retry"),
+        lambda: page.locator('[aria-label*="重试"]'),
+        lambda: page.locator('[aria-label*="Retry" i]'),
+        lambda: page.locator('[title*="重试"]'),
+        lambda: page.locator('[title*="Retry" i]'),
+    ):
+        try:
+            loc = factory()
+            n = loc.count()
+            for i in range(n - 1, -1, -1):
+                btn = loc.nth(i)
+                if not btn.is_visible():
+                    continue
+                btn.scroll_into_view_if_needed(timeout=2000)
+                btn.click(timeout=5000)
+                if log:
+                    log("[UI L2] 已点击「重试」（DOM）")
+                return True
+        except Exception:
+            continue
+    try:
+        hit = page.evaluate(_CLICK_REGENERATE_RETRY_JS)
+        if hit:
+            if log:
+                log("[UI L2] 已点击「重试」（操作栏/错误区 JS）")
+            return True
+    except Exception:
+        pass
+    if allow_template and click_retry_template_if_visible(page, config=cfg, log=log):
+        return True
+    return False
 
 
 def click_continue_generate_if_visible(
@@ -911,6 +1086,7 @@ def click_continue_generate_if_visible(
     *,
     config: dict | None = None,
     log=None,
+    allow_template: bool = True,
 ) -> bool:
     """若出现「继续生成」则点击（DOM 优先，图识别兜底）。"""
     cfg = config or load_ui_config()
@@ -927,14 +1103,16 @@ def click_continue_generate_if_visible(
                 btn = loc.nth(i)
                 if not btn.is_visible():
                     continue
-                btn.scroll_into_view_if_needed(timeout=3000)
+                btn.scroll_into_view_if_needed(timeout=2000)
                 btn.click(timeout=5000)
                 if log:
                     log("[UI L2] 已点击「继续生成」（DOM）")
                 return True
         except Exception:
             continue
-    return click_by_template(page, "continue_gen", config=cfg, log=log)
+    if allow_template and click_by_template(page, "continue_gen", config=cfg, log=log):
+        return True
+    return False
 
 
 def _last_assistant_locator(page):
@@ -966,16 +1144,22 @@ def looks_like_vision_response(
     if len(t) < 100:
         return False
     try:
-        from app.vision_transcribe.browser.katex_scrap import has_dom_katex_scrap
+        from app.vision_transcribe.clipboard_sanitize import (
+            has_clipboard_contamination,
+            recover_wait_transcript,
+        )
 
-        if has_dom_katex_scrap(t):
+        recovered = recover_wait_transcript(t)
+        if recovered.strip():
+            t = recovered.strip()
+        elif has_clipboard_contamination(t):
             return False
     except Exception:
         pass
     try:
-        from app.vision_transcribe.clipboard_sanitize import has_clipboard_contamination
+        from app.vision_transcribe.browser.katex_scrap import has_dom_katex_scrap
 
-        if has_clipboard_contamination(t):
+        if has_dom_katex_scrap(t):
             return False
     except Exception:
         pass
@@ -1040,7 +1224,6 @@ _FIND_COPY_BUTTON_JS = """
     if (/复制|copy/i.test(label) && !/复制链接|copy link/i.test(label)) return true;
     const svg = el.querySelector && el.querySelector('svg');
     if (!svg) return false;
-    // 双矩形「复制」图标：>=2 个 rect，或 path 呈双层纸张
     const rects = svg.querySelectorAll('rect');
     if (rects.length >= 2) return true;
     return false;
@@ -1050,20 +1233,118 @@ _FIND_COPY_BUTTON_JS = """
     const r = el.getBoundingClientRect();
     if (r.width < 18 || r.width > 56 || r.height < 18 || r.height > 56) return;
     if (r.top < vh * 0.15 || r.top > vh * 0.92) return;
-    if (r.left > window.innerWidth * 0.72) return; // 避开右侧悬浮控件
+    if (r.left > window.innerWidth * 0.72) return;
     if (!isCopyish(el)) return;
     const st = getComputedStyle(el);
     if (st.visibility === 'hidden' || st.display === 'none' || st.opacity === '0') return;
     candidates.push({ el, y: r.top + r.height / 2, x: r.left + r.width / 2, bottom: r.bottom });
   });
   if (!candidates.length) return null;
-  // 取最靠下、再偏左的一个（最后一条回答下方工具栏的复制）
   candidates.sort((a, b) => (b.bottom - a.bottom) || (a.x - b.x));
   const best = candidates[0];
   best.el.setAttribute('data-pdf2md-copy', '1');
   return { x: best.x, y: best.y };
 }
 """
+
+
+_RETRY_ERROR_NEEDLES = (
+    "生成失败",
+    "请重试",
+    "出了点问题",
+    "服务繁忙",
+    "网络异常",
+    "网络错误",
+    "请稍后再试",
+    "failed to generate",
+    "something went wrong",
+)
+
+
+def _retry_js_helpers() -> str:
+    needles = ", ".join(repr(n) for n in _RETRY_ERROR_NEEDLES)
+    return f"""
+  const errNeedles = [{needles}];
+  const labelOf = (el) =>
+    (el.getAttribute('aria-label') || el.title || el.innerText || '').trim();
+  const isRetryish = (el) => {{
+    const label = labelOf(el);
+    if (/重试|重新生成|再试一次|retry|regenerate|try again/i.test(label)) return true;
+    return false;
+  }};
+  const isVisible = (el) => {{
+    const r = el.getBoundingClientRect();
+    if (r.width < 12 || r.height < 12) return false;
+    const st = getComputedStyle(el);
+    return st.visibility !== 'hidden' && st.display !== 'none' && st.opacity !== '0';
+  }};
+  const lastAssistant = () => {{
+    const sels = [
+      '[data-message-author-role="assistant"]',
+      '.ds-message',
+      '.markdown-body',
+      'div[class*="assistant"]',
+    ];
+    let best = null;
+    let bestY = -1;
+    for (const sel of sels) {{
+      for (const el of document.querySelectorAll(sel)) {{
+        const r = el.getBoundingClientRect();
+        if (r.height < 8) continue;
+        if (r.top >= bestY) {{
+          bestY = r.top;
+          best = el;
+        }}
+      }}
+    }}
+    return best;
+  }};
+  const hasErrorContext = () => {{
+    const root = lastAssistant();
+    if (!root) return false;
+    const t = (root.innerText || '').toLowerCase();
+    return errNeedles.some((n) => t.includes(String(n).toLowerCase()));
+  }};
+  const retryCandidates = () => {{
+    const vh = window.innerHeight;
+    const out = [];
+    document.querySelectorAll('button,[role="button"]').forEach((el) => {{
+      if (!isVisible(el) || !isRetryish(el)) return;
+      const r = el.getBoundingClientRect();
+      if (r.top < vh * 0.12 || r.top > vh * 0.95) return;
+      out.push({{ el, bottom: r.bottom, x: r.left }});
+    }});
+    out.sort((a, b) => (b.bottom - a.bottom) || (a.x - b.x));
+    return out;
+  }};
+"""
+
+
+_IS_REGENERATE_RETRY_VISIBLE_JS = (
+    "() => {"
+    + _retry_js_helpers()
+    + """
+  const cands = retryCandidates();
+  if (!cands.length) return false;
+  if (cands.some((c) => /重试|retry/i.test(labelOf(c.el)))) return true;
+  return hasErrorContext();
+}
+"""
+)
+
+_CLICK_REGENERATE_RETRY_JS = (
+    "() => {"
+    + _retry_js_helpers()
+    + """
+  const cands = retryCandidates();
+  for (const c of cands) {
+    c.el.click();
+    return true;
+  }
+  return false;
+}
+"""
+)
 
 
 _IS_RESPONSE_TOOLBAR_VISIBLE_JS = """
@@ -1473,7 +1754,9 @@ def is_generation_fully_done(
         if log:
             log("[UI L2] 结束判定：仍在生成中")
         return False
-    cont = is_continue_generate_visible(page, config=cfg)
+    cont = is_continue_generate_visible(
+        page, config=cfg, allow_template=False
+    )
     if cont:
         if log:
             log("[UI L2] 结束判定：仍有「继续生成」")
@@ -1772,7 +2055,7 @@ def extract_via_copy_button(
             return ""
 
     if log:
-        log("[UI L2] 动效已完成，读取系统剪贴板…")
+        log("[UI L2] 动效已完成，读取复制内容…")
     text = _read_clipboard_when_stable(read_fn, log=log)
 
     def _clip_ok(s: str) -> bool:
@@ -1871,9 +2154,12 @@ def smart_click(
     """三层定位：DOM → 截图模板 →（仅 coord 策略）坐标。"""
     cfg = config or load_ui_config()
     strategy = str(cfg.get("click_strategy", "auto"))
+    # recorded = 提交走录制回放；单步 smart_click 仍允许 DOM + 模板兜底
+    dom_ok = strategy in ("auto", "dom", "recorded")
+    tpl_ok = strategy in ("auto", "template", "recorded")
 
     # L1: DOM
-    if strategy in ("auto", "dom") and dom_click_fn:
+    if dom_ok and dom_click_fn:
         try:
             if dom_click_fn(dom_factories, strategy == "auto"):
                 if log:
@@ -1886,7 +2172,7 @@ def smart_click(
             return False
 
     # L2: 截图模板
-    if strategy in ("auto", "template"):
+    if tpl_ok:
         if click_by_template(page, key, config=cfg, log=log):
             return True
         if strategy == "template":

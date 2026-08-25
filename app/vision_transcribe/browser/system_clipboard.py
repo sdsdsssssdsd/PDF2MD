@@ -1,8 +1,14 @@
-"""读写系统剪贴板（与 DeepSeek 网页 Ctrl+C / 本地 Ctrl+V 一致）。"""
+"""读写系统剪贴板（与 DeepSeek 网页 Ctrl+C / 本地 Ctrl+V 一致）。
+
+自动化路径应优先用 clipboard_interceptor 隔离模式，避免污染用户剪贴板。
+仅在隔离失败回退时读写 OS，并用 snapshot_restore 包一层。
+"""
 from __future__ import annotations
 
 import subprocess
 import sys
+from contextlib import contextmanager
+from typing import Iterator
 
 
 def read_system_clipboard_rich() -> tuple[str, str]:
@@ -101,3 +107,22 @@ def write_system_clipboard_text(text: str) -> bool:
     except Exception:
         pass
     return False
+
+
+@contextmanager
+def snapshot_restore_system_clipboard() -> Iterator[None]:
+    """临时占用系统剪贴板后恢复用户原有内容（回退路径用）。"""
+    saved_plain = ""
+    try:
+        saved_plain = read_system_clipboard_text()
+    except Exception:
+        saved_plain = ""
+    try:
+        yield
+    finally:
+        if not saved_plain:
+            return
+        try:
+            write_system_clipboard_text(saved_plain)
+        except Exception:
+            pass

@@ -7,6 +7,7 @@ from typing import Any, Callable
 
 from app.vision_transcribe.batch_ingest import (
     clear_batch_artifacts,
+    clear_batch_response_only,
     ingest_raw_response,
     read_raw_response,
     write_accepted_response,
@@ -102,38 +103,134 @@ class VisionPipeline:
             cancelled=cancelled,
         )
         m.set_pages(pages)
+        try:
+            from app.vision_transcribe.integrity.source_guard import build_all_source_guards
+
+            n_guard = build_all_source_guards(self.pdf_path, self.output_dir)
+            if n_guard:
+                self._log(f"SourceGuard：已为 {n_guard} 页建立文本层锚点")
+        except Exception as exc:
+            self._log(f"SourceGuard 跳过（{exc}）")
         if not m.batches:
             m.set_batches(plan_batches(len(pages), self.config.batch_size))
         elif self.config.force_rerun:
-            n = m.reset_all_batches_for_rerun()
-            self._clear_transcribe_artifacts(m)
-            self._log(f"强制重跑：已重置全部 {n} 个批次（将重新跑视觉转录）")
-        elif m.all_batches_accepted():
-            self._log(
-                "批次已全部 accepted，将跳过浏览器转录（直接合并/裁图）。"
-                "若需完整重跑 DeepSeek，请勾选「强制重跑浏览器转录」"
+            self._restart_all_batches(
+                m,
+                reason="强制重跑",
             )
         else:
-            # 断点续跑 / 重跑未完成：拉回 pending 并清旧回答，避免 resume 误读脏 raw
-            incomplete_ids = [
-                int(b["id"])
-                for b in m.batches
-                if str(b.get("status")) != BatchStatus.ACCEPTED.value
-            ]
-            reset_n = m.reset_incomplete_batches()
-            if reset_n:
-                for bid in incomplete_ids:
-                    clear_batch_artifacts(self.output_dir, bid)
+            n_bad = self._revalidate_accepted_batches(m)
+            if n_bad:
                 self._log(
-                    f"已重置 {reset_n} 个未完成批次为 pending（将自动重新提交浏览器）"
+                    f"完成检查未通过：已重置 {n_bad} 个批次，将重新提交浏览器"
                 )
+                self._continue_incomplete_batches(m)
+            elif m.all_batches_accepted():
+                # 已全部 accepted 且完成检查通过：保留，直接走合并/裁图
+                self._log(
+                    "输出目录已有全部 accepted 批次（完成检查通过），跳过浏览器重跑"
+                    "（已完成任务点「转换」会默认整篇重跑；"
+                    "仅合并/裁图可用右键「仅重合并与裁图」）"
+                )
+            else:
+                self._continue_incomplete_batches(m)
         for b in m.get_batches():
-            write_batch_prompt(batch_dir(self.output_dir, b.id), b.start_page, b.end_page)
+            write_batch_prompt(
+                batch_dir(self.output_dir, b.id),
+                b.start_page,
+                b.end_page,
+                batch_id=b.id,
+            )
         m.browser_mode = self.config.browser_mode
         m.state = PipelineState.READY_TO_TRANSCRIBE.value
         save_manifest(self.output_dir, m)
         self._log(f"渲染完成 {len(pages)} 页，{len(m.batches)} 个批次")
         return m
+
+    def _restart_all_batches(self, m: VisionManifest, *, reason: str) -> None:
+        """全部批次重新跑视觉转录（保留 attempts/ 诊断证据）。"""
+        n = m.reset_all_batches_for_rerun()
+        self._clear_transcribe_artifacts(m)
+        self._log(f"{reason}：已重置 {n} 个批次")
+
+    def _continue_incomplete_batches(self, m: VisionManifest) -> None:
+        """未完成批次沿断点续跑：保留 raw/attempts；仅恢复真正中断的上传/等待态。"""
+        keep_n = 0
+        reset_n = 0
+        for b in m.batches:
+            st = str(b.get("status"))
+            if st == BatchStatus.ACCEPTED.value:
+                continue
+            bid = int(b["id"])
+            raw = read_raw_response(self.output_dir, bid)
+            if raw and st in (
+                BatchStatus.RECEIVED.value,
+                BatchStatus.VALIDATING.value,
+                BatchStatus.NEEDS_RETRY.value,
+            ):
+                keep_n += 1
+                continue
+            if st in (
+                BatchStatus.WAITING_RESPONSE.value,
+                BatchStatus.UPLOADING.value,
+                BatchStatus.FAILED.value,
+            ):
+                b["status"] = BatchStatus.PENDING.value
+                b["error"] = ""
+                reset_n += 1
+                continue
+            if st == BatchStatus.PENDING.value and not raw:
+                reset_n += 1
+        if keep_n:
+            self._log(
+                f"断点续跑：保留 {keep_n} 个未完成批次的状态与 raw（沿未完成路径继续）"
+            )
+        if reset_n:
+            self._log(
+                f"续跑：{reset_n} 个批次待提交浏览器"
+                + ("（已保留 attempts/ 证据）" if keep_n else "")
+            )
+
+    def _revalidate_accepted_batches(self, m: VisionManifest) -> int:
+        """对已 accepted 批次再跑完成检查；未通过则打回 pending，禁止假 DONE。"""
+        from app.vision_transcribe.batch_validator import validate_batch_markdown
+
+        n_bad = 0
+        for b in m.get_batches():
+            if b.status != BatchStatus.ACCEPTED.value:
+                continue
+            raw = read_raw_response(self.output_dir, b.id)
+            if not (raw or "").strip():
+                clear_batch_response_only(self.output_dir, b.id)
+                m.update_batch_status(
+                    b.id,
+                    BatchStatus.PENDING.value,
+                    error="完成检查：accepted 但缺少 response.raw.md",
+                )
+                n_bad += 1
+                continue
+            result = validate_batch_markdown(
+                raw,
+                start_page=b.start_page,
+                end_page=b.end_page,
+                batch_id=b.id,
+                output_dir=self.output_dir,
+                prompt_version=m.prompt_version or "",
+            )
+            if result.ok:
+                continue
+            err = "; ".join(result.errors)
+            clear_batch_response_only(self.output_dir, b.id)
+            m.update_batch_status(
+                b.id,
+                BatchStatus.PENDING.value,
+                error=f"完成检查失败: {err}",
+            )
+            n_bad += 1
+        if n_bad:
+            m.state = PipelineState.READY_TO_TRANSCRIBE.value
+            save_manifest(self.output_dir, m)
+        return n_bad
 
     def _ensure_manifest(self) -> VisionManifest:
         if self.manifest is None:
@@ -190,11 +287,23 @@ class VisionPipeline:
         """Playwright 模式尝试自动提交；clipboard 模式返回 needs_user。"""
         prep = self.prepare_batch(batch)
         adapter = self.get_adapter()
+        if hasattr(adapter, "set_capture_context"):
+            adapter.set_capture_context(self.output_dir, prep.batch.id)
         m = self._ensure_manifest()
-        m.update_batch_status(prep.batch.id, BatchStatus.UPLOADING.value)
+        bid = prep.batch.id
+        m.update_batch_status(bid, BatchStatus.UPLOADING.value)
         save_manifest(self.output_dir, m)
-        self._log(f"自动提交 batch {prep.batch.id}: PAGE {prep.batch.start_page}-{prep.batch.end_page}")
-        result = adapter.submit_batch(prep.images, prep.prompt)
+        self._log(f"自动提交 batch {bid}: PAGE {prep.batch.start_page}-{prep.batch.end_page}")
+        try:
+            result = adapter.submit_batch(prep.images, prep.prompt)
+        except Exception:
+            m = self._ensure_manifest()
+            stuck = next((b for b in m.get_batches() if b.id == bid), None)
+            if stuck is not None and stuck.status == BatchStatus.UPLOADING.value:
+                m.update_batch_status(bid, BatchStatus.PENDING.value, error="")
+                save_manifest(self.output_dir, m)
+                self._log(f"batch {bid} 上传中断，已重置为 pending 便于续跑")
+            raise
         if result.needs_user:
             m.state = PipelineState.NEEDS_USER.value
             m.update_batch_status(prep.batch.id, BatchStatus.WAITING_RESPONSE.value)
@@ -208,6 +317,165 @@ class VisionPipeline:
             extract_stats=result.extract_stats,
         )
         return result
+
+    def try_recopy_batch(self, batch: BatchInfo) -> AdapterResult | None:
+        """Level-0：浏览器回答仍在时，仅重新 Capture + 校验。"""
+        adapter = self.get_adapter()
+        recopy_fn = getattr(adapter, "recopy_batch", None)
+        if recopy_fn is None:
+            return None
+        d = batch_dir(self.output_dir, batch.id)
+        prompt_path = d / "prompt.txt"
+        prompt = prompt_path.read_text(encoding="utf-8") if prompt_path.is_file() else ""
+        if hasattr(adapter, "set_capture_context"):
+            adapter.set_capture_context(self.output_dir, batch.id)
+        self._log(
+            f"Level-0 仅重新抽取 batch {batch.id}（PAGE {batch.start_page}-{batch.end_page}）"
+        )
+        clear_batch_response_only(self.output_dir, batch.id)
+        m = self._ensure_manifest()
+        m.update_batch_status(batch.id, BatchStatus.VALIDATING.value, error="")
+        save_manifest(self.output_dir, m)
+        result = recopy_fn(prompt)
+        if result.needs_user:
+            m.state = PipelineState.NEEDS_USER.value
+            m.update_batch_status(batch.id, BatchStatus.WAITING_RESPONSE.value)
+            save_manifest(self.output_dir, m)
+            return result
+        if not (result.markdown or "").strip():
+            return result
+        self.ingest_and_validate(
+            batch.id,
+            result.markdown,
+            extract_stats=result.extract_stats,
+        )
+        return result
+
+    def _submit_pages_for_retry(
+        self, batch: BatchInfo, pages: list[int], prompt: str
+    ) -> AdapterResult:
+        adapter = self.get_adapter()
+        if hasattr(adapter, "set_capture_context"):
+            adapter.set_capture_context(self.output_dir, batch.id)
+        images = [
+            self.output_dir / "bookfigures" / page_png_name(p) for p in pages
+        ]
+        return adapter.submit_batch(images, prompt)
+
+    def try_page_retry_batch(
+        self, batch: BatchInfo, pages: list[int] | None = None
+    ) -> AdapterResult | None:
+        """Level-2：仅重跑失败页，替换 batch raw 中对应 PAGE 块。"""
+        from app.vision_transcribe.capture.page_merge import replace_page_in_batch
+        from app.vision_transcribe.prompts import build_single_page_prompt
+        from app.vision_transcribe.recovery.failure_parse import (
+            failed_pages_from_errors,
+            load_batch_validation_errors,
+        )
+
+        pages = pages or failed_pages_from_errors(
+            load_batch_validation_errors(self.output_dir, batch.id)
+        )
+        pages = [p for p in pages if batch.start_page <= p <= batch.end_page]
+        if not pages:
+            return None
+        raw = read_raw_response(self.output_dir, batch.id) or ""
+        if not raw.strip():
+            return None
+
+        merged = raw
+        last_result: AdapterResult | None = None
+        for p in pages:
+            self._log(f"Level-2 单页重跑 PAGE {p:04d}（batch {batch.id}）")
+            prompt = build_single_page_prompt(page=p)
+            result = self._submit_pages_for_retry(batch, [p], prompt)
+            last_result = result
+            if result.needs_user:
+                return result
+            if not (result.markdown or "").strip():
+                self._log(f"Level-2 PAGE {p:04d} 无内容，跳过")
+                continue
+            merged = replace_page_in_batch(merged, p, result.markdown)
+
+        clear_batch_response_only(self.output_dir, batch.id)
+        m = self._ensure_manifest()
+        m.update_batch_status(batch.id, BatchStatus.VALIDATING.value, error="")
+        save_manifest(self.output_dir, m)
+        self.ingest_and_validate(
+            batch.id,
+            merged,
+            extract_stats=last_result.extract_stats if last_result else None,
+        )
+        return AdapterResult(
+            markdown=merged,
+            needs_user=False,
+            extract_stats=last_result.extract_stats if last_result else None,
+        )
+
+    def try_sub_batch_retry(
+        self, batch: BatchInfo, pages: list[int]
+    ) -> AdapterResult | None:
+        """Level-3：连续多页一次重跑，替换对应 PAGE 块。"""
+        from app.vision_transcribe.capture.page_merge import replace_page_in_batch
+        from app.vision_transcribe.capture.page_split import split_pages
+        from app.vision_transcribe.prompts import build_batch_prompt
+
+        pages = sorted(
+            {p for p in pages if batch.start_page <= p <= batch.end_page}
+        )
+        if len(pages) < 2:
+            return self.try_page_retry_batch(batch, pages)
+
+        raw = read_raw_response(self.output_dir, batch.id) or ""
+        if not raw.strip():
+            return None
+
+        start_p, end_p = pages[0], pages[-1]
+        self._log(
+            f"Level-3 子批次重跑 PAGE {start_p:04d}–{end_p:04d}（batch {batch.id}）"
+        )
+        prompt = build_batch_prompt(
+            start_page=start_p, end_page=end_p, batch_id=batch.id
+        )
+        result = self._submit_pages_for_retry(
+            batch, list(range(start_p, end_p + 1)), prompt
+        )
+        if result.needs_user:
+            return result
+        if not (result.markdown or "").strip():
+            return result
+
+        merged = raw
+        for p, sl in split_pages(result.markdown).items():
+            if p in pages:
+                merged = replace_page_in_batch(merged, p, sl.body)
+
+        clear_batch_response_only(self.output_dir, batch.id)
+        m = self._ensure_manifest()
+        m.update_batch_status(batch.id, BatchStatus.VALIDATING.value, error="")
+        save_manifest(self.output_dir, m)
+        self.ingest_and_validate(
+            batch.id,
+            merged,
+            extract_stats=result.extract_stats,
+        )
+        return AdapterResult(
+            markdown=merged,
+            needs_user=False,
+            extract_stats=result.extract_stats,
+        )
+
+    def force_accept_batch(self, batch_id: int) -> bool:
+        """仅有软告警时直接 accepted（不重新跑浏览器）。"""
+        raw = read_raw_response(self.output_dir, batch_id)
+        if not raw:
+            return False
+        m = self._ensure_manifest()
+        write_accepted_response(self.output_dir, batch_id, raw)
+        m.update_batch_status(batch_id, BatchStatus.ACCEPTED.value)
+        save_manifest(self.output_dir, m)
+        self._log(f"batch {batch_id:04d} 已接受（仅软告警）")
+        return True
 
     def resume_pending_submit(self) -> AdapterResult:
         """登录/验证后继续当前批次（子进程 resume）。"""
@@ -282,9 +550,16 @@ class VisionPipeline:
             raw,
             start_page=b.start_page,
             end_page=b.end_page,
+            prompt_version=m.prompt_version,
         )
         if result.ok:
             write_accepted_response(self.output_dir, batch_id, raw)
+            m.record_batch_acceptance(
+                batch_id,
+                raw,
+                self.output_dir,
+                extract_stats=extract_stats,
+            )
             m.update_batch_status(batch_id, BatchStatus.ACCEPTED.value)
             save_manifest(self.output_dir, m)
             self._log(f"batch {batch_id:04d} accepted ({b.start_page}-{b.end_page})")
@@ -319,9 +594,9 @@ class VisionPipeline:
             fig_path.unlink()
 
     def reset_batch_for_browser_retry(self, batch_id: int) -> None:
-        """校验失败后清旧回答并重置为 pending，供 Playwright 自动重提。"""
+        """校验失败后重置为 pending；保留 attempts/ 证据供诊断。"""
         m = self._ensure_manifest()
-        clear_batch_artifacts(self.output_dir, batch_id)
+        clear_batch_response_only(self.output_dir, batch_id)
         m.update_batch_status(batch_id, BatchStatus.PENDING.value, error="")
         save_manifest(self.output_dir, m)
 
@@ -353,7 +628,12 @@ class VisionPipeline:
         raw_md = raw_path.read_text(encoding="utf-8")
         m.state = PipelineState.VALIDATING_DOCUMENT.value
         save_manifest(self.output_dir, m)
-        doc_v = validate_document(raw_md, m.page_count)
+        doc_v = validate_document(
+            raw_md,
+            m.page_count,
+            output_dir=self.output_dir,
+            prompt_version=m.prompt_version or "",
+        )
         if not doc_v.ok:
             m.state = PipelineState.FAILED.value
             save_manifest(self.output_dir, m)
@@ -362,6 +642,21 @@ class VisionPipeline:
         m.state = PipelineState.CLEANING.value
         save_manifest(self.output_dir, m)
         cleaned_path = clean_and_write(self.output_dir, raw_md)
+        try:
+            from app.vision_transcribe.integrity.content_preservation import (
+                content_preservation_check,
+            )
+
+            cleaned_text = cleaned_path.read_text(encoding="utf-8")
+            ok_cp, cp_msg, cp_stats = content_preservation_check(raw_md, cleaned_text)
+            if ok_cp:
+                self._log(
+                    f"ContentPreservation ✓（drop {cp_stats.get('drop_ratio', 0):.1%}）"
+                )
+            else:
+                self._log(f"ContentPreservation 告警: {cp_msg}")
+        except Exception as exc:
+            self._log(f"ContentPreservation 跳过（{exc}）")
 
         figures = parse_figure_markers(cleaned_path.read_text(encoding="utf-8"))
         existing = {f.marker: f for f in load_figures_json(self.output_dir)}
@@ -455,12 +750,32 @@ class VisionPipeline:
             image_path_mode=mode,
             figure_labels=fig_labels,
         )
+        from app.vision_transcribe.figure_markers import (
+            figure_completion_errors,
+            strip_orphan_figure_markers_after_images,
+        )
+
+        md = strip_orphan_figure_markers_after_images(md)
         # 最终再跑一次安全清理（不剥 FIGURE 已替换内容）
         md = clean_vision_markdown(
-            # 写回后不应再有 PAGE；FIGURE 未完成的保留
+            # 写回后不应再有 PAGE；FIGURE 未完成的保留供门禁检出
             md,
             strip_page_markers=True,
         )
+        fig_errs = figure_completion_errors(md)
+        if fig_errs:
+            m.state = PipelineState.WAITING_FIGURES.value
+            save_manifest(self.output_dir, m)
+            raise RuntimeError(
+                "图片未全部插入，不能标记完成：" + "；".join(fig_errs)
+            )
+        from app.vision_transcribe.transcript_quality import model_degeneration_errors
+
+        deg_errs = model_degeneration_errors(md)
+        if deg_errs:
+            m.state = PipelineState.FAILED.value
+            save_manifest(self.output_dir, m)
+            raise RuntimeError("终稿完成检查失败：" + "；".join(deg_errs))
         if not md.strip():
             raise RuntimeError(
                 "最终 Markdown 为空（document.cleaned 或写回异常），"

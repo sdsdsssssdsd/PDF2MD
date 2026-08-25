@@ -1,5 +1,9 @@
-import os
 from pathlib import Path
+import os
+import sys
+
+ROOT = Path(__file__).resolve().parents[1]
+sys.path.insert(0, str(ROOT))
 
 from app.formula.recognizer import NullFormulaRecognizer
 from app.ocr.deepseek_benchmark import (
@@ -31,7 +35,10 @@ for n in ("1", "4", "5", "6", "7"):
     c = ex.extract(md, eq_number=n)
     print(n, "OK" if c else "FAIL", (c.text[:60] if c else ""))
 
-pdfs = list(Path(os.environ.get("PDF2MD_BENCH_ROOT") or (ROOT / "input")).rglob("O-018_Abdo2025_Stacking_SHAP.pdf"))
+bench = Path(os.environ.get("PDF2MD_BENCH_ROOT") or (ROOT / "input"))
+pdfs = list(bench.rglob("O-018_Abdo2025_Stacking_SHAP.pdf"))
+if not pdfs:
+    raise SystemExit("O-018 PDF not found under PDF2MD_BENCH_ROOT or input/")
 pdf = pdfs[0]
 fake = FakeDeepSeekOCR2Recognizer(
     {"page": md, "region": md, "formula": r"$$Recall=\frac{TP}{TP+FN}$$ (4)", "*": md}

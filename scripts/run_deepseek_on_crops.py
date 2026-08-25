@@ -13,6 +13,8 @@ ROOT = Path(__file__).resolve().parents[1]
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
+from app.ocr.deepseek_paths import ensure_deepseek_hf_env
+
 from app.ocr.deepseek_paths import (  # noqa: E402
     DSOCR2_PYTHON,
     ensure_deepseek_hf_env,

@@ -27,7 +27,11 @@ from app.formula.pipeline import FormulaPipeline
 from app.ocr.deepseek_worker_client import get_deepseek_worker_client
 from app.utils.paths import BENCHMARK_RUNS, ensure_dirs
 
-PDF = Path(os.environ["PDF2MD_BENCH_PDF"]) if os.environ.get("PDF2MD_BENCH_PDF") else (ROOT / "input" / "O-018_Abdo2025_Stacking_SHAP.pdf")
+PDF = (
+    Path(os.environ["PDF2MD_BENCH_PDF"])
+    if os.environ.get("PDF2MD_BENCH_PDF")
+    else (ROOT / "input" / "O-018_Abdo2025_Stacking_SHAP.pdf")
+)
 
 VARIANTS = [
     {"id": "A", "keep_formulas": True, "keep_tables": True, "keep_images": True},
