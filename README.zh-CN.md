@@ -2,10 +2,21 @@
 
 ![PDF2MD 产品宣传](docs/images/product-promo.png)
 
-Windows 桌面端：**学术 PDF → Markdown**。提供两条互补路线：
+Windows 桌面端：**学术 PDF / 截图 → Markdown**。五种互不替代的工作流：
 
-1. **快速自动** — Lean Docling 结构化解析 + 本地 **DeepSeek-OCR-2** 公式恢复
-2. **高保真视觉** — 整页渲染 + **DeepSeek 网页识图** 高保真转录
+| # | 模式 | 输入 | 谁写 Markdown |
+|---|------|------|----------------|
+| 1 | **日常识图** | 截图 | DeepSeek Vision API（一次输出） |
+| 2 | **API 高精度** | PDF 整页 | DeepSeek Vision API（识别 + 格式一次完成） |
+| 3 | **快速自动** | PDF | Docling / MinerU + 本地公式恢复 |
+| 4 | **网页高保真** | PDF 整页 | DeepSeek **网页**识图（Playwright） |
+| 5 | **格式修正** | 已有 `.md` / `.txt` | DeepSeek Chat API（整篇修格式） |
+
+**1 / 2 / 4** 要求 DeepSeek **第一次**就输出规范 Markdown（行内 `$...$`、多行 `$$`、不插 `---`）。**不会**在识别后再打一次 API 做后处理。
+
+**5** 是独立工具：把已经转坏的 Markdown 整篇交给 DeepSeek，保存为 `原名_修复版.md`。
+
+**3** 走本地引擎，**不需要** DeepSeek API Key。
 
 > **状态：Alpha（v0.1.0-alpha）**  
 > 请将输出视为草稿；公式多或走视觉路线时务必抽查。
@@ -28,98 +39,137 @@ English: [README.md](README.md)
 
 ---
 
-## 如何选择工作流
+## 如何选择
 
-| | **快速自动**（默认） | **高保真视觉** |
-|---|---|---|
-| **目标** | 快速得到可编辑的结构化 Markdown | 按页面视觉逐字转录，最大限度保留版式 |
-| **引擎** | Docling / MinerU | DeepSeek **网页**识图模式（Playwright） |
-| **公式** | 本地 DeepSeek-OCR-2 Worker（可选） | 模型读整页图，在转录稿中写 LaTeX |
-| **图片** | AssetPipeline 语义命名与导出 | 转录稿 FIGURE 占位 + Docling 自动裁图 |
-| **输出目录** | `output/<论文名>/` | `output/<论文名>_高保真/` |
-| **典型耗时** | 无坏公式时数秒级 | 分钟～小时（每批 10 页，受浏览器限制） |
-| **适用** | 大多数论文、批量转换 | 版式复杂、要求严格对齐原稿 |
-
-两条路线**相互独立**。高保真视觉**不依赖**本地 OCR daemon。
+| | **日常识图** | **API 高精度** | **快速自动** | **网页高保真** | **格式修正** |
+|---|---|---|---|---|---|
+| **输入** | 截图 / 粘贴 | PDF | PDF | PDF | 已有 Markdown |
+| **引擎** | Vision API | Vision API | Docling / MinerU | 网页 + Playwright | Chat API |
+| **需要 Key** | 是 | 是 | 否 | 否（网页登录） | 是 |
+| **输出** | 预览或 `日常识图/` | `<名>_API视觉/` | `<名>/` | `<名>_高保真/` | 旁路 `*_修复版.md` |
+| **耗时** | 秒～分钟 | 分钟级 | 秒～分钟 | 分钟～小时 | 秒～分钟 |
+| **适用** | 笔记、幻灯、手机图 | 官方 API、不跑浏览器 | 批量论文、本地 GPU | 版式难、无 API 额度 | `$` / `$$` / `---` 坏掉 |
 
 ---
 
-## 快速自动：当前能力
+## 共用 Markdown 规则
+
+Prompt 与后处理共同遵守：
+
+```text
+行内：$n$
+行间：
+$$
+F(\lambda)\sim\cdots
+$$
+禁止自动插入 ---
+「公式 (19)」保持编号引用
+「若 (n) 为奇数」→「若 $n$ 为奇数」
+```
+
+- 表格行与 `![图](...)` 之间必须空一行（否则图片会被吃进表格）
+- 行间公式必须写成**多行** `$$` 围栏（Typora / MathJax 才能稳定显示 `\tag{n}`）
+- 主界面只留高频选项，诊断项收入「…」
+
+---
+
+## 各模式说明
+
+### 1. 日常识图
+
+粘贴或拖入截图。DeepSeek Vision API 转录可见文字（公式、表格、图片标记）。可选归档到 `日常识图/`。
+
+格式规则写在识图 Prompt 里，不再二次纠错。
+
+### 2. API 高精度
+
+渲染 PDF 页面，调用官方 Vision API。与网页模式同一套 Prompt：页标记、多行 `$$`、原图有编号才写 `\tag{n}`、禁止 `---`。
+
+输出目录：`<Pdf名>_API视觉/`。
+
+在 **设置 → DeepSeek API** 配置 Base URL、Key（`DEEPSEEK_API_KEY` 或系统凭据）、传输方式（自动 / Base64 / Files API）、超时。
+
+没有 Key **不能**让模式 3 / 4 转换失败。模式 1 / 2 / 5 会提示先配置 Key。
+
+### 3. 快速自动
 
 | 模块 | 说明 |
 |------|------|
 | 解析 | Docling Lean：公式 enrich **关**，表格 FAST，图片 ×3 |
 | 引擎 | Docling（默认）/ MinerU / 自动回退 |
-| 公式 | 坏公式 / `formula-not-decoded` → DeepSeek **公式裁剪 OCR** |
-| 编号 | OCR **前**用 PDF 印刷编号绑定 Eq.(n)；OCR 不决定编号 |
+| 公式 | 坏公式 → 本地 DeepSeek-OCR-2 Worker |
+| 编号 | OCR **前**绑定印刷 Eq.(n) |
 | 写回 | 仅高置信；多行 `$$`；有编号则 `\tag{n}` |
-| Worker | 与 GUI **解耦**的本机 daemon（`127.0.0.1:18765`），关 GUI 不杀进程 |
-| 修复 | Unicode、表格/`$` 安全、表格与图片间强制空行 |
+| Worker | 与 GUI 解耦的本机 daemon（`127.0.0.1:18765`） |
 
-暖机参考：无公式 ~4–11s；约 7 式恢复 ~60–70s。冷加载 DeepSeek 可能一次性多花数分钟。
+暖机参考：无坏公式约 4–11 秒；约 7 式恢复约 60–70 秒。冷加载模型可能一次性多花数分钟。
 
----
-
-## 高保真视觉：当前能力
+### 4. 网页高保真
 
 | 模块 | 说明 |
 |------|------|
-| 渲染 | PDF 逐页 → 带页码标签的 PNG（**3×**，`bookfigures/`） |
-| 转录 | 每批 **10 页** → DeepSeek 识图对话（Playwright 有头浏览器） |
-| Prompt | 禁止摘要/润色；行间公式多行 `$$`；`\tag{n}` 仅当原图有编号 |
-| 自动化 | DOM 填词/上传/发送；截图模板 L2；录制流程回放 |
-| 容错 | Level-0～4 恢复（重抽、单页重跑、子批次、全量重提） |
-| 限流 | 附件「**服务器繁忙**」：DOM + 图模板双检；账户级冷却 **约 10 分钟** 后自动续跑 |
-| 校验 | 页标记、截断检测、公式完整性、内容保留规则 |
-| 合并 | 批次合并 + Markdown 清理（表图空行、公式围栏） |
-| 裁图 | 合并后 Docling 自动填入 `FIGURE` 占位 |
-| 断点续跑 | `.vision/manifest.json` + 各 batch 目录 |
+| 渲染 | 整页 PNG（**3×**，`bookfigures/`） |
+| 转录 | 每批 **10 页**，Playwright 有头浏览器 |
+| Prompt | 与 API 模式相同的「一次写对格式」（`vision-transcribe-v2.2`） |
+| 容错 | Level-0～4；「服务器繁忙」冷却约 10 分钟 |
+| 断点 | `.vision/manifest.json` |
+| 裁图 | 合并后 Docling 填入 `FIGURE` |
 
-**浏览器模式**
+推荐 **Playwright 自动**（登录态在 `data/deepseek_profile/`）。自动化不可用时用剪贴板半自动。  
+UI 校准：工具栏 **DeepSeek UI…** 或 `scripts/calibrate_deepseek_ui.py`。
 
-- **Playwright 自动**（推荐）：子进程隔离，登录态保存在 `data/deepseek_profile/`
-- **剪贴板半自动**：自动化不可用时手动粘贴
+浏览器转录结束后**不会**再打一轮 Vision API。
 
-**UI 校准**：工具栏 **DeepSeek UI…**，或运行 `scripts/calibrate_deepseek_ui.py`（模板在 `data/deepseek_templates/`）。
+### 5. 格式修正
+
+给「已经有一份 md，但格式很烂」用：
+
+```text
+坏.md  →  DeepSeek Chat API  →  坏_修复版.md
+```
+
+本地只负责：读文件 / 剪贴板、按安全边界分块（不切开 `$$` 与代码围栏）、调 API、拼接、保存。  
+**不再**用正则判断「这是行内还是行间」。
+
+必须配置 API Key。不润色正文，不改数字、公式编号和引用编号。
 
 ---
 
 ## 架构
 
-### 快速自动（Lean Balanced）
-
 ```text
-PDF
- → Docling（Lean）
- → raw.md + 图
- → AssetPipeline
- → Repair / FormulaPipeline
-      → Identity 绑号
-      → DeepSeek Worker（coverage-first）
-      → Gate（强上下文冲突硬否决）
-      → 受控写回
- → *.md + *.formula_qa.json
+解析层
+  ├── 日常截图     → DeepSeek Vision API
+  ├── PDF API视觉  → DeepSeek Vision API
+  ├── PDF 结构化   → Docling / MinerU → Asset → Formula
+  └── PDF 网页视觉 → Playwright 打开 DeepSeek 网站
+        ↓
+规范化（仅结构化 / 网页合并后）
+  ├── 图片写回
+  └── SafeRepair（Unicode、表图空行、$$ 围栏）
+        ↓
+格式修正模式（仅已有 Markdown）
+  └── DeepSeek 整篇修格式
+        ↓
+导出
 ```
 
-### 高保真视觉
+### 快速自动
 
 ```text
-PDF
- → 整页渲染（3× + 页标签）
- → VisionPipeline（按批）
-      → Playwright：新对话 → 识图模式 → Prompt + 上传
-      → 等待回答 → 抽取 Markdown
-      → 校验 / 失败恢复
- → 合并 + 清理
- → Docling 裁图写回
- → 最终 *.md
+PDF → Docling Lean → raw.md
+    → AssetPipeline → Repair / FormulaPipeline（可选本地 OCR）
+    → *.md
 ```
 
-**共用导出硬规则**（代码强制）：
+### 视觉（API 或网页）
 
-- 表格行与 `![图](...)` 之间至少空一行
-- 行间公式写成多行 `$$` 围栏
-- 主界面选项行精简，诊断项收入「…」
+```text
+PDF → 整页渲染
+    → DeepSeek（官方 API **或** 网站）一次输出内容 + 格式
+    → 合并 / 清理 / 裁图
+    → 最终 *.md
+```
 
 ---
 
@@ -127,8 +177,9 @@ PDF
 
 - Windows 10/11
 - Python **3.10+**（3.12 已测）
-- **快速自动 + 公式**：建议 NVIDIA GPU + CUDA PyTorch
-- **高保真视觉**：`playwright` + Chromium；需 DeepSeek 网页账号登录
+- **快速自动 + 公式**：建议 NVIDIA GPU
+- **日常 / API / 格式修正**：DeepSeek API Key
+- **网页高保真**：`playwright` + Chromium + 网页账号
 - 引擎需单独安装：`docling`、可选 `mineru`
 
 ---
@@ -145,24 +196,30 @@ python run_gui.py
 
 或双击 `run_gui.bat`。
 
-### 高保真视觉（Playwright）
+### DeepSeek API（模式 1、2、5）
+
+```bat
+set DEEPSEEK_API_KEY=your-deepseek-api-key
+```
+
+或在 **设置 → DeepSeek API** 填写（写入凭据管理器，日志不打印 Key）。
+
+### 网页高保真（Playwright）
 
 ```bash
 pip install playwright
 playwright install chromium
 ```
 
-首次运行：在弹出的浏览器中登录 DeepSeek，之后复用 `data/deepseek_profile/`。
+首次在弹出窗口登录 DeepSeek，之后复用 `data/deepseek_profile/`。
 
-### 公式恢复（快速自动，推荐）
+### 本地公式恢复（模式 3，可选）
 
 ```bat
 set PDF2MD_HF_HOME=你的HF缓存目录
 set PDF2MD_DEEPSEEK_MODEL_DIR=你的DeepSeek-OCR-2目录
 set PDF2MD_DSOCR2_PYTHON=能加载模型的python.exe
 ```
-
-可选预热 daemon：
 
 ```bash
 python scripts/start_deepseek_ocr_daemon.py --warmup
@@ -181,12 +238,14 @@ set MINERU_MODEL_SOURCE=modelscope
 
 ## 使用提示
 
-1. 顶部选择 **快速自动** 或 **高保真视觉**
-2. 设置导出目录，拖入 PDF，点 **开始转换**
-3. **快速自动**：需要公式时开启 DeepSeek 相关选项；完成后看 `*.md` 与 `*.formula_qa.json`
-4. **高保真视觉**：输出在 `*_高保真/`；关注流水线阶段面板；勿关 DeepSeek 浏览器窗口
-5. 上传出现 **服务器繁忙** 时程序会自动暂停约 10 分钟再续跑（刷新无效，属账户级限流）
-6. 右键任务可 **仅重合并与裁图**（不重跑浏览器）
+1. 顶部选择五种模式之一
+2. 设置导出目录
+3. **日常识图**：粘贴 / 拖入图片
+4. **API / 快速自动 / 网页**：拖入 PDF → **开始转换**
+5. **格式修正**：粘贴或导入 `.md` → **修正格式**（需要 Key）
+6. 完成后看 `*.md`；快速自动公式恢复另有 `*.formula_qa.json`
+
+**网页模式**：转换中勿关 DeepSeek 浏览器；出现「服务器繁忙」会自动冷却约 10 分钟再续跑；右键可「仅重合并与裁图」。
 
 ---
 
@@ -196,20 +255,21 @@ set MINERU_MODEL_SOURCE=modelscope
 PDF2MD/
 ├── app/
 │   ├── engines/              # Docling / MinerU
-│   ├── assets/               # 图片资产管线
+│   ├── assets/               # 图片资产
 │   ├── repair/               # RepairPipeline
 │   ├── formula/              # 公式检测 / 恢复 / 写回
-│   ├── ocr/                  # DeepSeek-OCR-2 Worker 客户端
-│   ├── vision_transcribe/    # 高保真视觉全流程 + Playwright
-│   ├── workers/              # 后台 QThread
+│   ├── ocr/                  # 本地 DeepSeek-OCR-2 Worker
+│   ├── vision_api/           # 官方 HTTP 客户端
+│   ├── deepseek_api/         # Chat 封装（格式修正）
+│   ├── daily_vision/         # 日常识图
+│   ├── format_repair/        # 第五模式：分块 + 整篇 API
+│   ├── vision_transcribe/    # API / Playwright 视觉管线
+│   ├── workers/
 │   └── main_window.py
-├── data/
-│   ├── deepseek_ui.json
-│   └── deepseek_templates/   # 截图模板（发送键、重试、服务器繁忙等）
+├── data/deepseek_templates/  # 网页模板（含「服务器繁忙」）
 ├── scripts/
 ├── tests/
 ├── docs/images/
-├── debug/formula_benchmark/
 ├── .cursor/rules/
 └── run_gui.py
 ```
@@ -221,12 +281,14 @@ PDF2MD/
 | 配置项 | 说明 |
 |--------|------|
 | 导出目录 | 主窗口 |
+| DeepSeek API | 设置页：Base URL、Key、视觉模型、传输方式 |
 | 图片质量 | 有图论文建议 **高 (×3)** |
-| 视觉批次大小 | 默认 10 页 |
+| 视觉批次 | 默认 10 页 |
 | 上传限流冷却 | 默认 600 秒 |
 
 | 变量 | 用途 |
 |------|------|
+| `DEEPSEEK_API_KEY` | 官方 API（日常 / API 视觉 / 格式修正） |
 | `PDF2MD_HF_HOME` | HuggingFace 缓存 |
 | `PDF2MD_DEEPSEEK_MODEL_DIR` | DeepSeek-OCR-2 权重 |
 | `PDF2MD_DSOCR2_PYTHON` | 能加载 OCR 模型的 Python |
@@ -245,7 +307,7 @@ python scripts/check_github_submit_privacy.py
 pytest
 ```
 
-CI：Windows × Python 3.10–3.12，不下载大模型、不连真实 DeepSeek。
+CI：Windows × Python 3.10–3.12，含隐私扫描；不下载大模型、不连真实 DeepSeek。
 
 常用脚本：`start_deepseek_ocr_daemon.py`、`calibrate_deepseek_ui.py`、`record_deepseek_dom.py`。
 
@@ -254,8 +316,8 @@ CI：Windows × Python 3.10–3.12，不下载大模型、不连真实 DeepSeek�
 ## 路线图
 
 - 困难文档公式 canary 继续抬升
-- 视觉模式批次与 ETA 优化
-- 可选登录后后台预热 OCR daemon
+- 网页视觉批次与 ETA
+- 可选登录后预热 OCR daemon
 - 表格几何修复增强
 
 **刻意冻结**：DeepSeek OCR prompt/token、Lean picture×3、coverage-first 首轮 OCR。
@@ -266,5 +328,6 @@ CI：Windows × Python 3.10–3.12，不下载大模型、不连真实 DeepSeek�
 
 - 勿提交个人 PDF、模型权重、`.cache`、密钥
 - GPU / CUDA PyTorch 需自行安装
-- 高保真模式使用 DeepSeek **网站**，请遵守其服务条款
+- 网页模式使用 DeepSeek **网站**，请遵守其条款
+- 官方 API 的额度与计费以 DeepSeek 为准；Key 只留在本机
 - 第三方引擎与模型各有许可（见 `NOTICE`）

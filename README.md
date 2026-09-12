@@ -2,10 +2,21 @@
 
 ![PDF2MD product](docs/images/product-promo.png)
 
-Windows desktop app for **academic PDF → Markdown**. It offers two complementary workflows:
+Windows desktop app for **academic PDF / screenshots → Markdown**. Five independent workflows:
 
-1. **快速自动 (Structured)** — Lean Docling parse + local **DeepSeek-OCR-2** formula recovery
-2. **高保真视觉 (Vision fidelity)** — page rendering + **DeepSeek web vision** transcription for layout-faithful output
+| # | Mode | Input | Who writes Markdown |
+|---|------|-------|---------------------|
+| 1 | **日常识图** | Screenshots | DeepSeek Vision API (one shot) |
+| 2 | **API 高精度** | PDF pages | DeepSeek Vision API (one shot, format included) |
+| 3 | **快速自动** | PDF | Docling / MinerU + local formula recovery |
+| 4 | **网页高保真** | PDF pages | DeepSeek **website** via Playwright |
+| 5 | **格式修正** | Existing `.md` / `.txt` | DeepSeek Chat API (full-document format repair) |
+
+Modes **1 / 2 / 4** ask DeepSeek to emit correct Markdown **on the first pass** (inline `$...$`, multiline `$$`, no `---`). They do **not** add a second API call afterwards.
+
+Mode **5** is a standalone fixer: paste or import a messy Markdown file, send the whole document to DeepSeek, save `原名_修复版.md`.
+
+Mode **3** stays local. It never requires a DeepSeek API key.
 
 > **Status: Alpha (v0.1.0-alpha).**  
 > Treat all outputs as drafts. Formula-heavy or vision runs still need spot-checks.
@@ -32,102 +43,141 @@ Same academic excerpt — **PDF before** vs **Markdown after** (structured workf
 
 ## Choose a workflow
 
-| | **快速自动** (default) | **高保真视觉** |
-|---|---|---|
-| **Goal** | Fast, structured Markdown with repair | Pixel-faithful transcription of every page |
-| **Engine** | Docling / MinerU | DeepSeek **web** vision mode (Playwright) |
-| **Formulas** | Local DeepSeek-OCR-2 Worker (optional) | Model reads page images; LaTeX in transcript |
-| **Figures** | AssetPipeline naming + export | Vision transcript + Docling auto-crop for `FIGURE` slots |
-| **Output dir** | `output/<paper>/` | `output/<paper>_高保真/` |
-| **Typical time** | Seconds (no broken formulas) | Minutes–hours (batch size 10, browser-bound) |
-| **Best for** | Most papers, batch conversion | Hard layouts, strict fidelity, equation/table preservation |
-
-The two paths are **independent**. Vision mode does **not** use the local OCR daemon.
+| | **日常识图** | **API 高精度** | **快速自动** | **网页高保真** | **格式修正** |
+|---|---|---|---|---|---|
+| **Input** | Screenshots / paste | PDF | PDF | PDF | Existing Markdown |
+| **Engine** | DeepSeek Vision API | DeepSeek Vision API | Docling / MinerU | DeepSeek web + Playwright | DeepSeek Chat API |
+| **Needs API Key** | Yes | Yes | No | No (browser login) | Yes |
+| **Output** | Preview or `日常识图/` archive | `output/<stem>_API视觉/` | `output/<stem>/` | `output/<stem>_高保真/` | Sibling `*_修复版.md` |
+| **Typical time** | Seconds–minutes | Minutes | Seconds–minutes | Minutes–hours | Seconds–minutes |
+| **Best for** | Slides, notes, phone shots | Official API, no browser | Batch papers, local GPU | Hard layouts, no API quota | Broken `$` / `$$` / `---` |
 
 ---
 
-## What structured mode does today
+## Shared Markdown rules
+
+Enforced in prompts and post-process:
+
+```text
+Inline math:   $n$
+Display math:
+$$
+F(\lambda)\sim\cdots
+$$
+Never auto-insert ---
+Keep equation refs: 公式 (19)
+Restore context vars: 若 (n) 为奇数 → 若 $n$ 为奇数
+```
+
+- Blank line between table rows and `![figure](...)` (otherwise CommonMark eats the image into the table)
+- Display math must be **multiline** `$$` fences (Typora / MathJax `\tag{n}`)
+- Main window: high-frequency options only; diagnostics behind **…**
+
+---
+
+## Mode details
+
+### 1. 日常识图 (Daily vision)
+
+Paste or drop screenshots. DeepSeek Vision API transcribes visible text into Markdown (formulas, tables, figure markers). Optional archive writes `document.md` + source copies under `日常识图/`.
+
+No second correction pass. Format rules live in the transcription prompt.
+
+### 2. API 高精度 (Vision API)
+
+PDF pages are rendered and sent to DeepSeek Vision API. Same prompt family as web vision: page markers, multiline `$$`, printed `\tag{n}` only when visible, no `---`.
+
+Output folder: `<PdfName>_API视觉/`.
+
+Configure **Settings → DeepSeek API**: Base URL, Key (`DEEPSEEK_API_KEY` or Windows Credential Manager), transport (auto / Base64 / Files API), timeout.
+
+Missing Key **must not** break modes 3–4. Modes 1 / 2 / 5 will ask you to configure a Key.
+
+### 3. 快速自动 (Structured)
 
 | Area | Behavior |
 |------|----------|
 | Parse | **Docling** lean path (formula enrich OFF, tables FAST, pictures ×3) |
 | Engines | Docling (default) / MinerU / Auto |
-| Figures | **AssetPipeline**: `image_{N}_{stem}.png`, optional `manifest.json` |
-| Formulas | Detect broken / `formula-not-decoded` → DeepSeek formula-crop OCR |
-| Identity | Bind printed Eq.(n) **before** OCR (PDF label / defining prose) |
+| Figures | **AssetPipeline**: `image_{N}_{stem}.png` |
+| Formulas | Broken / `formula-not-decoded` → local DeepSeek-OCR-2 Worker |
+| Identity | Bind printed Eq.(n) **before** OCR |
 | Writeback | High-confidence only; multiline `$$` + optional `\tag{n}` |
-| Worker | **GUI-independent daemon** on `127.0.0.1:18765` (survives GUI restart) |
-| Repair | Unicode, table/`$` safety, mandatory blank line between tables and images |
+| Worker | GUI-independent daemon on `127.0.0.1:18765` |
 
-Typical wall times on a warm machine (illustrative):
+Illustrative warm times: no broken formulas **~4–11 s**; ~7 recoveries **~60–70 s**; cold model load can add **~3–4 min** once.
 
-- No broken formulas → **~4–11 s**
-- ~7 formulas recovered → **~60–70 s**
-- Cold DeepSeek load (first time) → can add **~3–4 min** once per session
-
----
-
-## What vision fidelity mode does today
+### 4. 网页高保真 (Web vision)
 
 | Area | Behavior |
 |------|----------|
 | Render | PDF pages → labeled PNGs at **3×** (`bookfigures/`) |
-| Transcribe | Batches of **10 pages** → DeepSeek vision chat (Playwright, headed browser) |
-| Prompt | Strict no-summary rules; multiline `$$`; `\tag{n}` only when printed on page |
-| Browser automation | DOM fill/upload/send, template matching (L2), recorded workflow replay |
-| Resilience | Level-0–4 recovery (re-copy, page retry, sub-batch, full re-submit) |
-| Rate limits | Detects attachment **「服务器繁忙」** (DOM + image template); **~10 min** account cooldown |
-| Validation | Page markers, truncation guard, formula integrity, content preservation |
-| Merge | Batch merge + Markdown cleanup (table↔figure spacing, display math fences) |
-| Figures | Docling auto-extract into `FIGURE` placeholders after merge |
-| State | `.vision/manifest.json` + per-batch dirs; resumable after interrupt |
+| Transcribe | Batches of **10 pages** via Playwright (headed Chromium) |
+| Prompt | Same first-pass format rules as API mode (`vision-transcribe-v2.2`) |
+| Resilience | Level-0–4 recovery; **「服务器繁忙」** cooldown ~10 min |
+| State | `.vision/manifest.json`; resumable |
+| Figures | Docling auto-crop into `FIGURE` slots after merge |
 
-**Browser modes**
+**Playwright auto** (recommended): profile in `data/deepseek_profile/`.  
+**Clipboard semi-auto**: manual paste if automation is unavailable.  
+Calibrate UI: toolbar **DeepSeek UI…** or `scripts/calibrate_deepseek_ui.py`.
 
-- **Playwright auto** (recommended): isolated subprocess, persistent profile in `data/deepseek_profile/`
-- **Clipboard semi-auto**: manual paste when automation is unavailable
+Does **not** call the Vision API a second time after the browser transcript.
 
-**UI calibration**: toolbar **DeepSeek UI…** or `scripts/calibrate_deepseek_ui.py` for screenshot templates (`data/deepseek_templates/`).
+### 5. 格式修正 (Format repair)
+
+Standalone tool for Markdown that already exists but is broken:
+
+```text
+bad.md  →  DeepSeek Chat API  →  bad_修复版.md
+```
+
+Local code only: read file / clipboard, split long docs on safe boundaries (not inside `$$` or fences), call API, join, save. **No regex “is this inline or display?” layer.**
+
+Requires an API Key. Does not rewrite math conclusions, numbers, or equation references.
 
 ---
 
 ## Architecture
 
+```text
+Parser
+  ├── Daily screenshots  → DeepSeek Vision API
+  ├── PDF Vision API     → DeepSeek Vision API
+  ├── PDF Structured     → Docling / MinerU → AssetPipeline → FormulaPipeline
+  └── PDF Web vision     → Playwright DeepSeek site
+        ↓
+Normalization (structured / web only)
+  ├── AssetPipeline / figure writeback
+  └── SafeRepair (Unicode, table↔figure spacing, $$ fences)
+        ↓
+Format repair mode (optional, existing Markdown only)
+  └── DeepSeek full-document format repair
+        ↓
+Exporter
+```
+
 ### Structured (Lean Balanced)
 
 ```text
 PDF
-  → Docling (lean: no formula enrich)
+  → Docling (lean)
   → *.raw.md + images
   → AssetPipeline
   → RepairPipeline
-       → FormulaPipeline
-            → bbox + Equation Identity
-            → DeepSeek Worker OCR ×1 / formula
-            → Gate (strong context conflict = hard veto)
-            → Controlled writeback ($$\n...\n$$  \tag{n}?)
-  → *.md + *.formula_qa.json + timings_*.json
+       → FormulaPipeline (local DeepSeek-OCR-2, optional)
+  → *.md + *.formula_qa.json
 ```
 
-### Vision fidelity
+### Vision (API or web)
 
 ```text
 PDF
-  → render_pdf_to_bookfigures (3×, page labels)
-  → VisionPipeline (per batch)
-       → Playwright: new chat → vision mode → prompt + upload
-       → wait response → capture / copy markdown
-       → validate (page markers, quality, formula integrity)
-       → recovery planner on failure
-  → merge_accepted_batches + clean_vision_markdown
-  → Docling figure auto-extract → final *.md
+  → render pages
+  → DeepSeek (API **or** website) — content + Markdown format in one response
+  → merge / clean / figure writeback
+  → final *.md
 ```
-
-**Shared export rules** (enforced in code):
-
-- Blank line between table rows and `![figure](...)` links
-- Display math as multiline `$$` fences (Typora / MathJax safe)
-- Main UI: high-frequency options only; diagnostics behind **…**
 
 ---
 
@@ -135,8 +185,9 @@ PDF
 
 - Windows 10/11 (primary target)
 - Python **3.10+** (3.12 tested)
-- **Structured + formulas**: NVIDIA GPU strongly recommended for DeepSeek-OCR-2
-- **Vision mode**: `playwright` + Chromium; logged-in DeepSeek account in browser profile
+- **Structured + formulas**: NVIDIA GPU recommended for DeepSeek-OCR-2
+- **API / daily / format repair**: DeepSeek API Key
+- **Web vision**: `playwright` + Chromium; logged-in DeepSeek account
 - Install engines separately: `docling`, optional `mineru`, CUDA `torch` matching your driver
 
 ---
@@ -153,24 +204,30 @@ python run_gui.py
 
 Or double-click `run_gui.bat`.
 
-### Vision fidelity (Playwright)
+### DeepSeek API (modes 1, 2, 5)
+
+```bat
+set DEEPSEEK_API_KEY=your-deepseek-api-key
+```
+
+Or paste the Key in **Settings → DeepSeek API** (stored in Credential Manager; never logged).
+
+### Web vision (Playwright)
 
 ```bash
 pip install playwright
 playwright install chromium
 ```
 
-First run: log in to DeepSeek in the opened browser window. Profile is reused from `data/deepseek_profile/`.
+First run: log in to DeepSeek in the opened window. Profile is reused from `data/deepseek_profile/`.
 
-### DeepSeek formula recovery — structured mode (optional)
+### Local formula recovery (mode 3, optional)
 
 ```bat
 set PDF2MD_HF_HOME=D:\path\to\hf-cache
 set PDF2MD_DEEPSEEK_MODEL_DIR=D:\path\to\DeepSeek-OCR-2
 set PDF2MD_DSOCR2_PYTHON=D:\path\to\dsocr2\Scripts\python.exe
 ```
-
-Keep the Worker warm across GUI restarts:
 
 ```bash
 python scripts/start_deepseek_ocr_daemon.py --warmup
@@ -190,18 +247,18 @@ See [`.env.example`](.env.example).
 ## Usage
 
 1. Start the app
-2. Pick **快速自动** or **高保真视觉** at the top
+2. Pick a mode in the 2×2 (+ format repair) picker
 3. Set export directory if needed
-4. **Structured**: enable formula recovery when needed; drag PDFs → **开始转换**
-5. **Vision**: choose Playwright or clipboard mode; output goes to `*_高保真/`; watch pipeline stage panel
-6. Review `*.md`; for structured formula runs also check `*.formula_qa.json`
+4. **日常识图**: paste/drop images
+5. **API / 快速自动 / 网页**: drag PDFs → **开始转换**
+6. **格式修正**: paste or import `.md` → **修正格式** (needs Key)
+7. Review `*.md`; structured formula runs also write `*.formula_qa.json`
 
-**Vision tips**
+**Web vision tips**
 
 - Do not close the DeepSeek browser during a batch
-- On **服务器繁忙** (server busy on uploads), the app pauses ~10 minutes per account and resumes automatically
-- Right-click tasks for **仅重合并与裁图** (re-merge + figures without re-running the browser)
-- **强制重跑浏览器转录** clears prior vision batches
+- On **服务器繁忙**, the app pauses ~10 minutes per account and resumes
+- Right-click: **仅重合并与裁图** / **强制重跑浏览器转录**
 
 ---
 
@@ -215,17 +272,20 @@ PDF2MD/
 │   ├── repair/               # RepairPipeline + PDF geometry
 │   ├── formula/              # Detection, identity, gate, writeback
 │   ├── ocr/                  # DeepSeek-OCR-2 Worker client
-│   ├── vision_transcribe/    # Vision fidelity pipeline + Playwright browser
-│   ├── workers/              # QThread workers (structured + vision)
-│   ├── dialogs/ / ui/        # GUI, settings, MoreOptionsDialog
+│   ├── vision_api/           # Official DeepSeek HTTP client (Key, Files API)
+│   ├── deepseek_api/         # Thin Chat wrapper (format repair)
+│   ├── daily_vision/         # Screenshot → Markdown
+│   ├── format_repair/        # Mode 5: chunk + full-document DeepSeek
+│   ├── vision_transcribe/    # API + Playwright vision pipeline
+│   ├── workers/              # QThread workers
+│   ├── ui/widgets/           # WorkflowPicker, workspaces
 │   └── main_window.py
 ├── data/
-│   ├── deepseek_ui.json      # UI template / recorded workflow config
-│   └── deepseek_templates/   # Screenshot templates for L2 matching
-├── scripts/                  # daemon, calibration, benchmarks, publish helpers
+│   ├── deepseek_ui.json
+│   └── deepseek_templates/   # L2 screenshot templates (incl. 服务器繁忙)
+├── scripts/
 ├── tests/
 ├── docs/images/
-├── debug/formula_benchmark/  # Formula recovery fixtures & canary
 ├── .cursor/rules/            # Markdown / UI hard rules
 ├── run_gui.py
 └── requirements.txt
@@ -238,21 +298,21 @@ PDF2MD/
 | Item | Notes |
 |------|--------|
 | Export dir | Main window |
+| DeepSeek API | Settings page: Base URL, Key, vision model, transport |
 | Image quality | Prefer **High (×3)** for papers with figures |
-| Formulas + DeepSeek | Structured workflow only |
-| Parallel jobs | Prefer `1` on 8 GB VRAM |
-| Vision batch size | Default 10 pages (`VisionConfig.batch_size`) |
-| Server-busy cooldown | Default 600 s (`VisionConfig.server_busy_cooldown_seconds`) |
+| Formulas + local OCR | Structured workflow only |
+| Vision batch size | Default 10 pages |
+| Server-busy cooldown | Default 600 s |
 
 | Variable | Purpose |
 |----------|---------|
+| `DEEPSEEK_API_KEY` | Official API (daily / API vision / format repair) |
 | `PDF2MD_PYTHON` | Python for subprocess tooling |
 | `PDF2MD_DOCLING_ARTIFACTS` | Docling artifacts directory |
 | `PDF2MD_HF_HOME` | HF / transformer cache root |
 | `PDF2MD_DEEPSEEK_MODEL_DIR` | Local DeepSeek-OCR-2 snapshot |
 | `PDF2MD_DSOCR2_PYTHON` | Interpreter that can load DeepSeek-OCR-2 |
 | `DEEPSEEK_WORKER_IDLE_UNLOAD_SECONDS` | Idle unload model (default 3600) |
-| `PDF2MD_BENCH_PDF` / `PDF2MD_BENCH_ROOT` | Local benchmark PDFs for scripts |
 | `HF_ENDPOINT` / `MINERU_MODEL_SOURCE` | Mirrors (**opt-in**) |
 
 ---
@@ -267,15 +327,13 @@ python scripts/check_github_submit_privacy.py
 pytest
 ```
 
-CI (`.github/workflows/ci.yml`): `compileall` + `pytest` on Windows × Python 3.10–3.12.  
-Does **not** download Docling / DeepSeek weights or run Playwright against live DeepSeek.
-
-**Useful scripts**
+CI (`.github/workflows/ci.yml`): `compileall` + `pytest` + privacy scan on Windows × Python 3.10–3.12.  
+Does **not** download Docling / DeepSeek weights or hit live DeepSeek.
 
 | Script | Purpose |
 |--------|---------|
 | `scripts/start_deepseek_ocr_daemon.py` | Formula Worker daemon |
-| `scripts/calibrate_deepseek_ui.py` | Recalibrate vision UI templates |
+| `scripts/calibrate_deepseek_ui.py` | Recalibrate web-vision UI templates |
 | `scripts/record_deepseek_dom.py` | Record DOM replay steps |
 | `scripts/smoke_deepseek_load.py` | GPU load smoke test |
 
@@ -283,9 +341,9 @@ Does **not** download Docling / DeepSeek weights or run Playwright against live 
 
 ## Roadmap
 
-- Stronger formula canary yield on hard documents (O-003 / O-024 / O-028 class)
-- Vision: smarter batch sizing and ETA
-- Optional Windows login Task Scheduler warmup for the OCR daemon
+- Stronger formula canary yield on hard documents
+- Web vision: smarter batch sizing and ETA
+- Optional Task Scheduler warmup for the OCR daemon
 - Broader table structure repair from PDF geometry
 
 Frozen for now: DeepSeek OCR prompt/token budget, Lean Docling picture×3, coverage-first mandatory OCR round.
@@ -296,12 +354,15 @@ Frozen for now: DeepSeek OCR prompt/token budget, Lean Docling picture×3, cover
 
 [`CONTRIBUTING.md`](CONTRIBUTING.md) · [`SECURITY.md`](SECURITY.md)
 
+Do not commit personal PDFs, model weights, `.cache`, or API keys.
+
 ---
 
 ## Disclaimer
 
 - Converts documents you provide locally.
-- You are responsible for copyright / privacy of your PDFs.
-- Vision mode uses the DeepSeek **website** under your account; respect their terms of use.
+- You are responsible for copyright / privacy of your files.
+- Web vision uses the DeepSeek **website** under your account; respect their terms.
+- Official API usage is billed / limited by DeepSeek; keys stay on your machine.
 - OCR / layout / formula accuracy varies; review before publishing.
 - Third-party engines and models have their own licenses (see [`NOTICE`](NOTICE)).
