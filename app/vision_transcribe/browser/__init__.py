@@ -15,6 +15,16 @@ __all__ = [
 
 def create_adapter(mode: str, **kwargs):
     mode = (mode or "clipboard").lower()
+    if mode in ("api", "vision_api", "deepseek_api"):
+        from app.vision_api.deepseek_adapter import DeepSeekApiVisionAdapter
+
+        allowed = {"config", "log"}
+        kw = {k: v for k, v in kwargs.items() if k in allowed}
+        if "config" not in kw:
+            from app.vision_api.config import VisionApiConfig
+
+            kw["config"] = VisionApiConfig.from_settings()
+        return DeepSeekApiVisionAdapter(**kw)
     if mode in ("playwright", "deepseek", "auto"):
         # GUI 默认走子进程客户端，避免 Qt 线程内 sync Playwright 卡死界面
         from app.vision_transcribe.browser.playwright_session_client import (

@@ -23,6 +23,7 @@ from PySide6.QtWidgets import (
     QRadioButton,
     QScrollArea,
     QSplitter,
+    QStackedWidget,
     QTableWidget,
     QTableWidgetItem,
     QVBoxLayout,
@@ -55,7 +56,20 @@ from app.drop_widget import DropWidget
 from app.dialogs.vision_clipboard_dialog import VisionClipboardDialog
 from app.dialogs.vision_deepseek_ui_dialog import VisionDeepSeekUiDialog
 from app.dialogs.vision_figure_dialog import VisionFigureDialog
-from app.task_model import ConvertTask, EngineChoice, TaskStatus, WorkflowChoice
+from app.task_model import (
+    ConvertTask,
+    EngineChoice,
+    TaskStatus,
+    WorkflowChoice,
+    WORKFLOW_PICKER_MAP,
+    is_daily_workflow,
+    is_format_repair_workflow,
+    is_structured_workflow,
+    is_vision_api_workflow,
+    is_vision_web_workflow,
+    is_vision_workflow,
+    normalize_workflow,
+)
 from app.ui.icons import icon
 from app.ui.identity import formula_profile_identity, formula_profile_tone
 from app.ui.pipeline_classify import STAGE_LABELS, classify_pipeline_stage
@@ -65,10 +79,15 @@ from app.ui.widgets.command_bar import CommandBar
 from app.ui.widgets.section_card import SectionCard
 from app.ui.widgets.segmented import SegmentedControl
 from app.ui.widgets.status_badge import StatusBadge
-from app.ui.widgets.vision_status_panel import VisionStatusPanel
+from app.ui.widgets.daily_vision_workspace import DailyVisionWorkspace
+from app.ui.widgets.format_repair_workspace import FormatRepairWorkspace
+from app.ui.widgets.workflow_picker import WorkflowPicker
 from app.utils.logger import add_listener, get_logger, remove_listener
-from app.utils.paths import ensure_dirs
+from app.ui.widgets.vision_status_panel import VisionStatusPanel
+from app.utils.paths import daily_archive_dir, ensure_dirs, resolve_vision_output_dir
 from app.vision_transcribe.config import VisionConfig
+from app.workers.daily_vision_worker import DailyVisionWorker
+from app.workers.format_repair_worker import FormatRepairWorker
 from app.workers.docling_worker import ConversionWorker
 from app.workers.vision_worker import VisionConversionWorker, VisionFigureRebuildWorker
 
@@ -100,6 +119,9 @@ class MainWindow(QMainWindow):
 
         self._vision_run_active = False
         self._figure_rebuild_worker: VisionFigureRebuildWorker | None = None
+        self._daily_worker: DailyVisionWorker | None = None
+        self._format_repair_worker: FormatRepairWorker | None = None
+        self._daily_session = None
 
         self._build_ui()
         self._apply_settings_to_ui()
@@ -131,6 +153,7 @@ class MainWindow(QMainWindow):
         self._refresh_export_extras_label()
         self._refresh_recognize_extras_label()
         self._refresh_ds_badge()
+        self._refresh_vision_api_badge()
         self._refresh_empty_state()
 
     def _header_button(self, text: str, slot, tip: str, icon_name: str = "") -> QPushButton:
@@ -154,8 +177,10 @@ class MainWindow(QMainWindow):
         header.addWidget(ver)
         header.addWidget(self.badge_profile)
         header.addStretch(1)
-        self.badge_ds = StatusBadge("DeepSeek · Cold", "neutral")
+        self.badge_ds = StatusBadge("OCR-2 · Off", "neutral")
         header.addWidget(self.badge_ds)
+        self.badge_vision_api = StatusBadge("Vision API · Unset", "neutral")
+        header.addWidget(self.badge_vision_api)
         header.addWidget(self._header_button("设置", self._open_settings, "Ctrl+,  应用设置", "settings"))
         header.addWidget(self._header_button("日志", self._log_dialog.show, "Ctrl+L  转换日志", "log"))
         header.addWidget(self._header_button("公式实验室", self._open_formula_lab, "实验工作台（诊断）", "flask"))
@@ -164,9 +189,20 @@ class MainWindow(QMainWindow):
         return w
 
     def _build_workspace(self) -> QWidget:
-        left = QWidget()
-        left_l = QVBoxLayout(left)
-        left_l.setContentsMargins(0, 0, 8, 0)
+        wrapper = QWidget()
+        outer = QVBoxLayout(wrapper)
+        outer.setContentsMargins(0, 0, 8, 0)
+
+        self.workspace_stack = QStackedWidget()
+        self.daily_workspace = DailyVisionWorkspace()
+        self.daily_workspace.request_recognize.connect(self._on_daily_recognize)
+        self.daily_workspace.request_save_markdown.connect(self._on_daily_save_markdown)
+        self.daily_workspace.request_open_output.connect(self._open_output_root)
+        self.workspace_stack.addWidget(self.daily_workspace)
+
+        doc = QWidget()
+        left_l = QVBoxLayout(doc)
+        left_l.setContentsMargins(0, 0, 0, 0)
         self.drop = DropWidget()
         self.drop.files_dropped.connect(self._on_drop)
         left_l.addWidget(self.drop)
@@ -194,7 +230,19 @@ class MainWindow(QMainWindow):
         self.table.verticalHeader().setDefaultSectionSize(36)
         self.table.horizontalHeader().setSectionResizeMode(8, QHeaderView.ResizeMode.ResizeToContents)
         left_l.addWidget(self.table, 1)
-        return left
+        self.workspace_stack.addWidget(doc)
+
+        self.format_repair_workspace = FormatRepairWorkspace()
+        self.format_repair_workspace.repair_requested.connect(
+            self._on_format_repair_requested
+        )
+        self.format_repair_workspace.save_requested.connect(
+            self._on_format_repair_save
+        )
+        self.workspace_stack.addWidget(self.format_repair_workspace)
+
+        outer.addWidget(self.workspace_stack, 1)
+        return wrapper
 
     def _build_profile_panel(self) -> QWidget:
         profile = QWidget()
@@ -209,18 +257,60 @@ class MainWindow(QMainWindow):
         pl = QVBoxLayout(pane)
         pl.setSpacing(10)
 
-        self.seg_workflow = SegmentedControl(
-            [("快速自动", "structured"), ("高保真视觉", "vision")]
-        )
-        self.seg_workflow.value_changed.connect(self._on_workflow_changed)
+        self.workflow_picker = WorkflowPicker()
+        self.workflow_picker.value_changed.connect(self._on_workflow_changed)
         wf_card = SectionCard("转换模式")
-        wf_card.body.addWidget(self.seg_workflow)
+        wf_card.body.addWidget(self.workflow_picker)
         self.lbl_workflow_hint = QLabel("Docling Lean + DeepSeek 公式恢复")
         self.lbl_workflow_hint.setWordWrap(True)
         self.lbl_workflow_hint.setProperty("role", "muted")
         wf_card.body.addWidget(self.lbl_workflow_hint)
         pl.addWidget(wf_card)
 
+        self.mode_settings_stack = QStackedWidget()
+
+        daily_page = QWidget()
+        daily_l = QVBoxLayout(daily_page)
+        daily_l.setContentsMargins(0, 0, 0, 0)
+        daily_hint = QLabel("拖入图片后自动识别 · 结果可直接复制或图文归档")
+        daily_hint.setWordWrap(True)
+        daily_hint.setProperty("role", "muted")
+        daily_l.addWidget(daily_hint)
+        daily_l.addStretch(1)
+        self.mode_settings_stack.addWidget(daily_page)
+
+        self.api_vision_card = SectionCard("API 高精度视觉")
+        api_row = QHBoxLayout()
+        self.cmb_api_precision = QComboBox()
+        self.cmb_api_precision.addItem("标准（10 页/批）", "standard")
+        self.cmb_api_precision.addItem("精确（2 页/批）", "precise")
+        self.cmb_api_precision.addItem("极致（1 页/批）", "extreme")
+        api_row.addWidget(QLabel("精度"))
+        api_row.addWidget(self.cmb_api_precision, 1)
+        self.api_vision_card.body.addLayout(api_row)
+        self.cb_api_force_rerun = QCheckBox("强制重跑 API 视觉转录")
+        self.cb_api_force_rerun.setToolTip(
+            "未完成但已有 accepted 批次时，勾选后按当前精度重新分批并从第 1 页重跑；"
+            "不勾选则断点续跑。"
+        )
+        api_force_row = QHBoxLayout()
+        api_force_row.addWidget(self.cb_api_force_rerun)
+        api_force_row.addStretch(1)
+        self.api_vision_card.body.addLayout(api_force_row)
+        self.lbl_api_hint = QLabel(
+            "DeepSeek Vision API · 标准默认每批 10 页 · 输出到「Pdf名_API视觉」"
+        )
+        self.lbl_api_hint.setWordWrap(True)
+        self.lbl_api_hint.setProperty("role", "muted")
+        self.api_vision_card.body.addWidget(self.lbl_api_hint)
+        self.api_vision_status = VisionStatusPanel()
+        self.api_vision_card.body.addWidget(self.api_vision_status)
+        self.mode_settings_stack.addWidget(self.api_vision_card)
+
+        structured_page = QWidget()
+        structured_l = QVBoxLayout(structured_page)
+        structured_l.setContentsMargins(0, 0, 0, 0)
+        structured_l.setSpacing(10)
         self.rb_docling = QRadioButton("Docling", self)
         self.rb_mineru = QRadioButton("MinerU", self)
         self.rb_auto = QRadioButton("自动", self)
@@ -237,10 +327,9 @@ class MainWindow(QMainWindow):
         self.seg_engine.value_changed.connect(self._on_engine_segment)
         self.eng_card = SectionCard("解析引擎")
         self.eng_card.body.addWidget(self.seg_engine)
-        pl.addWidget(self.eng_card)
+        structured_l.addWidget(self.eng_card)
 
-        # 高保真视觉选项（默认隐藏）
-        self.vision_card = SectionCard("高保真视觉")
+        self.vision_card = SectionCard("网页高保真视觉")
         self.cmb_vision_browser = QComboBox()
         self.cmb_vision_browser.addItem("Playwright 自动（推荐）", "playwright")
         self.cmb_vision_browser.addItem("剪贴板半自动", "clipboard")
@@ -273,8 +362,7 @@ class MainWindow(QMainWindow):
         self.vision_card.body.addLayout(ui_row)
         self.vision_status = VisionStatusPanel()
         self.vision_card.body.addWidget(self.vision_status)
-        self.vision_card.setVisible(False)
-        pl.addWidget(self.vision_card)
+        self.mode_settings_stack.addWidget(self.vision_card)
 
         self._structured_cards: list[QWidget] = []
 
@@ -332,7 +420,7 @@ class MainWindow(QMainWindow):
         self.cb_deepseek_lp.toggled.connect(self._on_deepseek_lp_toggled)
         self.cb_deepseek_lp.toggled.connect(self._refresh_recognize_extras_label)
         self._recognize_more.finished.connect(self._refresh_recognize_extras_label)
-        pl.addWidget(rec_card)
+        structured_l.addWidget(rec_card)
         self.rec_card = rec_card
 
         self.cb_images = QCheckBox("图片")
@@ -387,26 +475,8 @@ class MainWindow(QMainWindow):
         for c in self._export_extra_cbs:
             c.toggled.connect(self._refresh_export_extras_label)
         self._export_more.finished.connect(self._refresh_export_extras_label)
-        pl.addWidget(exp_card)
+        structured_l.addWidget(exp_card)
         self.exp_card = exp_card
-
-        out_card = SectionCard("输出")
-        self.output_edit = QLineEdit()
-        self.output_edit.setPlaceholderText("导出目录")
-        self.output_edit.editingFinished.connect(self._persist_output_dir)
-        out_dir_row = QHBoxLayout()
-        out_dir_row.addWidget(self.output_edit, 1)
-        btn_out = QPushButton("浏览")
-        btn_out.clicked.connect(self._pick_output)
-        btn_open_out = QPushButton("打开")
-        btn_open_out.clicked.connect(self._open_output_root)
-        out_dir_row.addWidget(btn_out)
-        out_dir_row.addWidget(btn_open_out)
-        out_card.body.addLayout(out_dir_row)
-        self.cb_per_folder = QCheckBox("每篇独立文件夹")
-        self.cb_per_folder.setChecked(True)
-        out_card.body.addWidget(self.cb_per_folder)
-        pl.addWidget(out_card)
 
         adv = CollapsibleSection("高级转换参数")
         self.rb_img_fast = QRadioButton("快速")
@@ -446,8 +516,50 @@ class MainWindow(QMainWindow):
             self._ocr_group.addButton(b)
             ocr_row.addWidget(b)
         adv.body.addLayout(ocr_row)
-        pl.addWidget(adv)
+        structured_l.addWidget(adv)
         self.adv_section = adv
+        structured_l.addStretch(1)
+        self.mode_settings_stack.addWidget(structured_page)
+
+        format_page = QWidget()
+        format_l = QVBoxLayout(format_page)
+        format_l.setContentsMargins(0, 0, 0, 0)
+        format_l.setSpacing(10)
+        format_card = SectionCard(
+            "格式修正",
+            "已有 Markdown 整篇交给 DeepSeek 修格式。本地只负责读取、分块、保存。",
+        )
+        fmt_rule = QLabel(
+            "DeepSeek 全文修复：\n"
+            "行内 $...$ · 行间多行 $$ · 不新增 ---\n"
+            "不润色、不改数字与公式编号"
+        )
+        fmt_rule.setWordWrap(True)
+        fmt_rule.setProperty("role", "muted")
+        format_card.body.addWidget(fmt_rule)
+        format_l.addWidget(format_card)
+        format_l.addStretch(1)
+        self.mode_settings_stack.addWidget(format_page)
+
+        out_card = SectionCard("输出")
+        self.output_edit = QLineEdit()
+        self.output_edit.setPlaceholderText("导出目录")
+        self.output_edit.editingFinished.connect(self._persist_output_dir)
+        out_dir_row = QHBoxLayout()
+        out_dir_row.addWidget(self.output_edit, 1)
+        btn_out = QPushButton("浏览")
+        btn_out.clicked.connect(self._pick_output)
+        btn_open_out = QPushButton("打开")
+        btn_open_out.clicked.connect(self._open_output_root)
+        out_dir_row.addWidget(btn_out)
+        out_dir_row.addWidget(btn_open_out)
+        out_card.body.addLayout(out_dir_row)
+        self.cb_per_folder = QCheckBox("每篇独立文件夹")
+        self.cb_per_folder.setChecked(True)
+        out_card.body.addWidget(self.cb_per_folder)
+
+        pl.addWidget(self.mode_settings_stack)
+        pl.addWidget(out_card)
         self._structured_cards = [self.eng_card, self.rec_card, self.exp_card, self.adv_section]
         pl.addStretch(1)
         scroll.setWidget(pane)
@@ -489,11 +601,81 @@ class MainWindow(QMainWindow):
         add("Ctrl+,", self._open_settings)
         add("Ctrl+L", self._log_dialog.show)
         add("F5", self._open_experiment_results)
+        add("Ctrl+V", self._paste_daily_image, "日常识图：粘贴剪贴板图片")
+
+    def _paste_daily_image(self) -> None:
+        if is_format_repair_workflow(self._current_workflow()):
+            self.format_repair_workspace._paste_clipboard()
+            return
+        if not is_daily_workflow(self._current_workflow()):
+            return
+        if not self.daily_workspace.paste_from_clipboard():
+            self.daily_workspace.set_status("剪贴板中没有图片")
+
+    def _on_daily_save_markdown(self, text: str) -> None:
+        out_text = self.output_edit.text().strip()
+        if not out_text:
+            QMessageBox.warning(self, "导出目录", "请先指定导出目录。")
+            return
+        out_root = Path(out_text)
+        out_root.mkdir(parents=True, exist_ok=True)
+        path = daily_archive_dir(out_root, "markdown") / "document.md"
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(text, encoding="utf-8")
+        self.daily_workspace.set_status(f"已保存：{path}")
+
+    def _on_format_repair_requested(self, text: str, use_review: bool) -> None:
+        if self._format_repair_worker and self._format_repair_worker.isRunning():
+            return
+        cfg = self.format_repair_workspace._config()
+        source, snapshot = self.format_repair_workspace.source_snapshot()
+        worker = FormatRepairWorker(
+            text,
+            cfg,
+            source_path=source,
+            snapshot=snapshot,
+        )
+        worker.finished_result.connect(self._on_format_repair_result)
+        worker.failed.connect(self._on_format_repair_failed)
+        self._format_repair_worker = worker
+        self.format_repair_workspace.set_busy(True)
+        self.format_repair_workspace.set_status("正在修正格式…")
+        worker.start()
+
+    def _on_format_repair_result(self, result) -> None:
+        self.format_repair_workspace.set_busy(False)
+        self.format_repair_workspace.set_result(result)
+
+    def _on_format_repair_failed(self, message: str) -> None:
+        self.format_repair_workspace.set_busy(False)
+        self.format_repair_workspace.set_status(f"格式修正失败：{message}")
+
+    def _on_format_repair_save(self) -> None:
+        result = self.format_repair_workspace._last_result
+        if result is None or not result.output_text:
+            self.format_repair_workspace.set_status("没有可保存的修正结果")
+            return
+        source, snapshot = self.format_repair_workspace.source_snapshot()
+        if source is not None:
+            from app.format_repair.file_io import save_repaired_sibling
+
+            path = save_repaired_sibling(source, result.output_text, snapshot)
+            self.format_repair_workspace.set_status(f"已保存：{path}")
+            return
+        file, _ = QFileDialog.getSaveFileName(
+            self,
+            "保存修复版",
+            "修复版.md",
+            "Markdown (*.md);;Text (*.txt)",
+        )
+        if file:
+            Path(file).write_text(result.output_text, encoding="utf-8")
+            self.format_repair_workspace.set_status(f"已保存：{file}")
 
     def _install_tab_order(self) -> None:
         QWidget.setTabOrder(self.drop, self.table)
-        QWidget.setTabOrder(self.table, self.seg_workflow)
-        QWidget.setTabOrder(self.seg_workflow, self.seg_engine)
+        QWidget.setTabOrder(self.table, self.workflow_picker)
+        QWidget.setTabOrder(self.workflow_picker, self.seg_engine)
         QWidget.setTabOrder(self.seg_engine, self.cb_tables)
         QWidget.setTabOrder(self.cb_tables, self.cb_md)
         QWidget.setTabOrder(self.cb_md, self.output_edit)
@@ -502,26 +684,57 @@ class MainWindow(QMainWindow):
         QWidget.setTabOrder(self.btn_cancel, self.btn_clear)
 
     def _current_workflow(self) -> str:
-        val = self.seg_workflow.value()
-        if val == "vision":
-            return WorkflowChoice.VISION.value
-        return WorkflowChoice.STRUCTURED.value
+        pid = self.workflow_picker.value()
+        return WORKFLOW_PICKER_MAP.get(pid, WorkflowChoice.STRUCTURED.value)
 
-    def _on_workflow_changed(self, value: str) -> None:
-        vision = value == "vision"
-        self.vision_card.setVisible(vision)
-        for w in getattr(self, "_structured_cards", []):
-            w.setVisible(not vision)
-        if vision:
-            self.lbl_workflow_hint.setText("整页视觉转录 + 人工图片确认")
-            self.command_bar.pipeline.set_mode("vision")
-            self.badge_profile.set_status("Vision Fidelity", "info")
-            self.vision_status.set_active(False)
+    def _vision_force_rerun_checked(self, workflow: str) -> bool:
+        checkbox = (
+            self.cb_api_force_rerun
+            if is_vision_api_workflow(workflow)
+            else self.cb_vision_force_rerun
+        )
+        return checkbox.isChecked()
+
+    def _on_workflow_changed(self, picker_id: str) -> None:
+        wf = WORKFLOW_PICKER_MAP.get(picker_id, WorkflowChoice.STRUCTURED.value)
+        hints = {
+            WorkflowChoice.DAILY.value: "截图 → DeepSeek Vision API → 可复制 Markdown",
+            WorkflowChoice.VISION_API.value: "PDF → Vision API → 校验合并 · Pdf名_API视觉",
+            WorkflowChoice.STRUCTURED.value: "Docling Lean + DeepSeek 公式恢复",
+            WorkflowChoice.VISION_WEB.value: "Playwright 网页识图 · Pdf名_高保真（备用）",
+            WorkflowChoice.FORMAT_REPAIR.value: "粘贴或导入 Markdown/Text · 只修格式 · 不改原文",
+        }
+        self.lbl_workflow_hint.setText(hints.get(wf, ""))
+
+        if is_daily_workflow(wf):
+            self.workspace_stack.setCurrentIndex(0)
+            self.mode_settings_stack.setCurrentIndex(0)
+            self.command_bar.setVisible(False)
+            self.badge_profile.set_status("Daily Vision", "info")
+        elif is_format_repair_workflow(wf):
+            self.workspace_stack.setCurrentIndex(2)
+            self.mode_settings_stack.setCurrentIndex(4)
+            self.command_bar.setVisible(False)
+            self.badge_profile.set_status("Format Repair", "info")
         else:
-            self.lbl_workflow_hint.setText("Docling Lean + DeepSeek 公式恢复")
-            self.command_bar.pipeline.set_mode("structured")
-            self._refresh_recognize_extras_label()
+            self.workspace_stack.setCurrentIndex(1)
+            self.command_bar.setVisible(True)
+            if is_vision_api_workflow(wf):
+                self.mode_settings_stack.setCurrentIndex(1)
+                self.command_bar.pipeline.set_mode("vision")
+                self.badge_profile.set_status("Vision API", "info")
+            elif is_vision_web_workflow(wf):
+                self.mode_settings_stack.setCurrentIndex(2)
+                self.command_bar.pipeline.set_mode("vision")
+                self.badge_profile.set_status("Vision Web", "info")
+            else:
+                self.mode_settings_stack.setCurrentIndex(3)
+                self.command_bar.pipeline.set_mode("structured")
+                self._refresh_recognize_extras_label()
             self.vision_status.set_active(False)
+            self.api_vision_status.set_active(False)
+        self._refresh_vision_api_badge()
+        settings().setValue("default_workflow", picker_id)
 
     def _refresh_empty_state(self) -> None:
         empty = self.table.rowCount() == 0
@@ -531,8 +744,11 @@ class MainWindow(QMainWindow):
 
     def _task_table_row_values(self, task: ConvertTask) -> list[str]:
         status_text, _ = self._status_display(task)
-        if getattr(task, "workflow", "") == WorkflowChoice.VISION.value:
-            mode = "视觉高保真"
+        if is_vision_workflow(getattr(task, "workflow", "")):
+            if is_vision_api_workflow(task.workflow):
+                mode = "API视觉"
+            else:
+                mode = "网页高保真"
             rec_lbl, post_lbl = "—", self._vision_fidelity_label(task)
         else:
             mode = task.engine
@@ -614,34 +830,48 @@ class MainWindow(QMainWindow):
 
     def _refresh_ds_badge(self) -> None:
         if not self._deepseek_limited_production():
-            self.badge_ds.set_status("DeepSeek · Off", "neutral")
-            self.command_bar.deepseek.set_status("DeepSeek · Off", "neutral")
+            self.badge_ds.set_status("OCR-2 · Off", "neutral")
+            self.command_bar.deepseek.set_status("OCR-2 · Off", "neutral")
             return
-        self.badge_ds.set_status("DeepSeek · Cold", "neutral")
-        self.command_bar.deepseek.set_status("DeepSeek · Cold", "neutral")
+        self.badge_ds.set_status("OCR-2 · Cold", "neutral")
+        self.command_bar.deepseek.set_status("OCR-2 · Cold", "neutral")
+
+    def _refresh_vision_api_badge(self) -> None:
+        from app.vision_api.key_store import api_key_configured
+
+        if api_key_configured():
+            self.badge_vision_api.set_status("Vision API · Configured", "success")
+        else:
+            self.badge_vision_api.set_status("Vision API · Unset", "neutral")
 
     def _on_pipeline_stage(self, stage: str) -> None:
         self.command_bar.pipeline.set_stage(stage)
         if self._vision_run_active:
-            self.vision_status.set_pipeline_stage(stage)
+            if is_vision_api_workflow(self._current_workflow()):
+                self.api_vision_status.set_pipeline_stage(stage)
+            else:
+                self.vision_status.set_pipeline_stage(stage)
 
     def _on_vision_log(self, line: str) -> None:
         self._on_log(line)
         # 高保真运行中，或侧栏可见时，一律写入状态面板（避免漏掉 [PW]/[UI L2]）
         if self._vision_run_active or (
-            hasattr(self, "vision_card") and self.vision_card.isVisible()
+            hasattr(self, "vision_card") and self.mode_settings_stack.currentWidget() == self.vision_card
         ):
             self.vision_status.set_active(True)
             self.vision_status.append_line(line)
+        if self._vision_run_active and is_vision_api_workflow(self._current_workflow()):
+            self.api_vision_status.set_active(True)
+            self.api_vision_status.append_line(line)
 
     def _on_deepseek_state(self, state: str) -> None:
         mapping = {
-            "warming": ("DeepSeek · Warming", "warning"),
-            "warm": ("DeepSeek · Warm", "info"),
-            "unavailable": ("DeepSeek · Unavailable", "danger"),
-            "cold": ("DeepSeek · Cold", "neutral"),
+            "warming": ("OCR-2 · Warming", "warning"),
+            "warm": ("OCR-2 · Warm", "info"),
+            "unavailable": ("OCR-2 · Unavailable", "danger"),
+            "cold": ("OCR-2 · Cold", "neutral"),
         }
-        text, tone = mapping.get(state, ("DeepSeek · —", "neutral"))
+        text, tone = mapping.get(state, ("OCR-2 · —", "neutral"))
         self.badge_ds.set_status(text, tone)
         self.command_bar.deepseek.set_status(text, tone)
 
@@ -734,6 +964,12 @@ class MainWindow(QMainWindow):
             self._kick_deepseek_background_warmup()
         else:
             self._refresh_ds_badge()
+        self._refresh_vision_api_badge()
+        wf = str(cfg.get("default_workflow", "daily") or "daily")
+        if wf not in ("daily", "vision_api", "structured", "vision_web", "vision"):
+            wf = "daily"
+        self.workflow_picker.set_value(wf, emit=False)
+        self._on_workflow_changed(wf)
 
     def _shutdown_deepseek_ocr2(self) -> None:
         """关闭 OCR-2 时释放 Worker / GPU。"""
@@ -803,6 +1039,73 @@ class MainWindow(QMainWindow):
         if self.rb_ocr_off.isChecked():
             return "disable"
         return "auto"
+
+    def _on_daily_recognize(self, paths: list, archive: bool) -> None:
+        from app.vision_api.key_store import api_key_configured
+
+        if self._daily_worker and self._daily_worker.isRunning():
+            return
+        if not paths:
+            return
+        if not api_key_configured():
+            QMessageBox.warning(
+                self,
+                "API Key",
+                "请先在「设置 → DeepSeek API」配置 API Key，或设置环境变量 DEEPSEEK_API_KEY。",
+            )
+            return
+        out_text = self.output_edit.text().strip()
+        if archive and not out_text:
+            QMessageBox.warning(self, "导出目录", "图文归档需要先指定导出目录。")
+            return
+        archive_dir = None
+        if archive:
+            out_root = Path(out_text)
+            out_root.mkdir(parents=True, exist_ok=True)
+            label = Path(paths[0]).stem if paths else "截图"
+            archive_dir = daily_archive_dir(out_root, label)
+
+        self.daily_workspace.set_busy(True)
+        self.daily_workspace.set_status("识别中…")
+        worker = DailyVisionWorker(
+            [Path(p) for p in paths],
+            archive=archive,
+            archive_dir=archive_dir,
+            parent=self,
+        )
+        self._daily_worker = worker
+
+        def _log(msg: str) -> None:
+            if msg:
+                get_logger().info(msg)
+
+        worker.log_line.connect(_log)
+
+        def _ok(md: str, err: str) -> None:
+            self.daily_workspace.set_busy(False)
+            if err:
+                self.daily_workspace.set_status(f"失败：{err}")
+                QMessageBox.warning(self, "日常识图", err)
+                return
+            self.daily_workspace.set_result(md)
+            self.daily_workspace.set_status("识别完成 · 可直接复制")
+
+        def _arch(md_path: str, err: str) -> None:
+            self.daily_workspace.set_busy(False)
+            if err:
+                self.daily_workspace.set_status(f"归档失败：{err}")
+                QMessageBox.warning(self, "日常识图", err)
+                return
+            try:
+                text = Path(md_path).read_text(encoding="utf-8")
+                self.daily_workspace.set_result(text)
+            except Exception:
+                pass
+            self.daily_workspace.set_status(f"已归档：{md_path}")
+
+        worker.finished_ok.connect(_ok)
+        worker.finished_archive.connect(_arch)
+        worker.start()
 
     def _on_drop(self, paths: list[str]) -> None:
         if not paths:
@@ -968,20 +1271,20 @@ class MainWindow(QMainWindow):
         status_text, tone = self._status_display(task)
         stage = self._stage_display(task)
         if task.status == TaskStatus.RUNNING.value:
-            if getattr(task, "workflow", "") == WorkflowChoice.VISION.value:
+            if is_vision_workflow(getattr(task, "workflow", "")):
                 self._load_task_vision_fidelity(task)
                 rec_lbl, post_lbl = "—", self._vision_fidelity_label(task)
             else:
                 rec_lbl, post_lbl = "…", "…"
         elif task.status == TaskStatus.WAITING.value:
             rec_lbl, post_lbl = "—", "—"
-        elif getattr(task, "workflow", "") == WorkflowChoice.VISION.value:
+        elif is_vision_workflow(getattr(task, "workflow", "")):
             rec_lbl, post_lbl = "—", self._vision_fidelity_label(task)
         else:
             rec_lbl, post_lbl = self._formula_column_labels(task)
         mode = (
             "视觉高保真"
-            if getattr(task, "workflow", "") == WorkflowChoice.VISION.value
+            if is_vision_workflow(getattr(task, "workflow", ""))
             else task.engine
         )
         vals = [
@@ -1007,7 +1310,7 @@ class MainWindow(QMainWindow):
                     else "转换完成后从 formula_qa 读取"
                 )
             if c == 6:
-                if getattr(task, "workflow", "") == WorkflowChoice.VISION.value:
+                if is_vision_workflow(getattr(task, "workflow", "")):
                     item.setToolTip(TOOLTIP_VISION_FIDELITY)
                 else:
                     item.setToolTip(
@@ -1018,7 +1321,7 @@ class MainWindow(QMainWindow):
             if c == 5 and task.formula_total and task.formula_recognized is not None:
                 if task.formula_recognized < task.formula_total:
                     item.setForeground(Qt.GlobalColor.darkYellow)
-            if c == 6 and getattr(task, "workflow", "") == WorkflowChoice.VISION.value:
+            if c == 6 and is_vision_workflow(getattr(task, "workflow", "")):
                 ratio = task.vision_fidelity_ratio
                 if ratio is not None:
                     if ratio < 0.70:
@@ -1087,7 +1390,11 @@ class MainWindow(QMainWindow):
         # 更新工作流 / 引擎到任务
         eng = self._current_engine()
         wf = self._current_workflow()
-        from app.utils.paths import vision_task_output_dir
+        if is_daily_workflow(wf):
+            QMessageBox.information(self, "提示", "日常识图模式：请拖入图片，将自动识别。")
+            return
+        if is_format_repair_workflow(wf):
+            return
         from app.vision_transcribe.manifest import should_force_vision_rerun
 
         for t in waiting:
@@ -1101,11 +1408,11 @@ class MainWindow(QMainWindow):
                 t.engine = eng
                 t.status = TaskStatus.WAITING.value
                 t.error = ""
-                if wf == WorkflowChoice.VISION.value:
-                    vis_out = vision_task_output_dir(out_root, t.pdf_path)
+                if is_vision_workflow(wf):
+                    vis_out = resolve_vision_output_dir(out_root, t.pdf_path, wf)
                     t.vision_force_rerun = should_force_vision_rerun(
                         vis_out,
-                        checkbox=self.cb_vision_force_rerun.isChecked(),
+                        checkbox=self._vision_force_rerun_checked(wf),
                         task_was_done=was_done,
                     )
                 else:
@@ -1117,28 +1424,51 @@ class MainWindow(QMainWindow):
         self.command_bar.set_count(0, self._total_count)
         self.command_bar.pipeline.reset()
 
-        if wf == WorkflowChoice.VISION.value:
+        if is_vision_workflow(wf):
             self.command_bar.pipeline.set_mode("vision")
             self.command_bar.pipeline.set_stage("render")
-            mode = self.cmb_vision_browser.currentData() or "clipboard"
-            cfg = VisionConfig(
-                browser_mode=str(mode),
-                headless=False,
-                images_scale=self._images_scale(),
-                image_path_mode=self._image_path_mode(),
-            )
-            # 高保真固定输出到「Pdf名_高保真」，与快速模式目录隔离
+            if is_vision_api_workflow(wf):
+                from app.vision_api.key_store import api_key_configured
+
+                if not api_key_configured():
+                    QMessageBox.warning(
+                        self,
+                        "API Key",
+                        "请先在「设置 → DeepSeek API」配置 API Key，或设置环境变量 DEEPSEEK_API_KEY。",
+                    )
+                    self.command_bar.set_running(False)
+                    return
+                prec = str(self.cmb_api_precision.currentData() or "standard")
+                cfg = VisionConfig(
+                    vision_backend="api",
+                    api_precision=prec,
+                    images_scale=self._images_scale(),
+                    image_path_mode=self._image_path_mode(),
+                )
+                status_panel = self.api_vision_status
+                start_msg = (
+                    f"开始 API 视觉 · 精度={prec} · "
+                    f"每批 {cfg.effective_batch_size()} 页 · 共 {len(waiting)} 篇"
+                )
+            else:
+                mode = self.cmb_vision_browser.currentData() or "clipboard"
+                cfg = VisionConfig(
+                    browser_mode=str(mode),
+                    vision_backend=str(mode),
+                    headless=False,
+                    images_scale=self._images_scale(),
+                    image_path_mode=self._image_path_mode(),
+                )
+                status_panel = self.vision_status
+                start_msg = f"开始网页高保真 · 浏览器={mode} · 共 {len(waiting)} 篇"
             per_folder = True
             if not self.cb_per_folder.isChecked():
-                self._on_vision_log(
-                    "[vision] 高保真输出到「Pdf名_高保真」子文件夹（与快速模式隔离）"
-                )
+                self._on_vision_log("[vision] 视觉模式输出到独立子文件夹（与快速模式隔离）")
             self._vision_run_active = True
             self.vision_status.clear()
-            self.vision_status.set_active(True)
-            self.vision_status.append_line(
-                f"开始高保真 · 浏览器={mode} · 共 {len(waiting)} 篇"
-            )
+            self.api_vision_status.clear()
+            status_panel.set_active(True)
+            status_panel.append_line(start_msg)
             self._worker = VisionConversionWorker(
                 waiting,
                 output_root=out_root,
@@ -1276,14 +1606,14 @@ class MainWindow(QMainWindow):
             task.status = TaskStatus.DONE.value
             task.output_md = Path(md) if md else None
             task.error = ""
-            if getattr(task, "workflow", "") == WorkflowChoice.VISION.value:
+            if is_vision_workflow(getattr(task, "workflow", "")):
                 self._load_task_vision_fidelity(task)
             else:
                 self._load_task_formula_metrics(task)
         else:
             task.status = TaskStatus.FAILED.value
             task.error = err
-            if getattr(task, "workflow", "") == WorkflowChoice.VISION.value:
+            if is_vision_workflow(getattr(task, "workflow", "")):
                 self._load_task_vision_fidelity(task)
             else:
                 self._load_task_formula_metrics(task)
@@ -1399,7 +1729,7 @@ class MainWindow(QMainWindow):
             act_mineru = menu.addAction("使用 MinerU 重新转换")
             act_md = menu.addAction("打开 Markdown")
             act_dir = menu.addAction("打开文件夹")
-            if getattr(t, "workflow", "") == WorkflowChoice.VISION.value and t.output_dir:
+            if is_vision_workflow(getattr(t, "workflow", "")) and t.output_dir:
                 act_rebuild_figs = menu.addAction("仅重合并与裁图（不重跑浏览器）")
         chosen = menu.exec(self.table.viewport().mapToGlobal(pos))
         if chosen == act_copy:
@@ -1413,7 +1743,7 @@ class MainWindow(QMainWindow):
             was_done = t.status == TaskStatus.DONE.value
             t.status = TaskStatus.WAITING.value
             t.error = ""
-            if getattr(t, "workflow", "") == WorkflowChoice.VISION.value:
+            if is_vision_workflow(getattr(t, "workflow", "")):
                 from app.utils.paths import vision_task_output_dir
                 from app.vision_transcribe.manifest import should_force_vision_rerun
 
@@ -1421,7 +1751,9 @@ class MainWindow(QMainWindow):
                 vis_out = t.output_dir or vision_task_output_dir(out_root, t.pdf_path)
                 t.vision_force_rerun = should_force_vision_rerun(
                     vis_out,
-                    checkbox=self.cb_vision_force_rerun.isChecked(),
+                    checkbox=self._vision_force_rerun_checked(
+                        getattr(t, "workflow", "")
+                    ),
                     task_was_done=was_done,
                 )
             else:

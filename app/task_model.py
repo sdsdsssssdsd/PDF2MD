@@ -21,8 +21,73 @@ class EngineChoice(str, Enum):
 
 
 class WorkflowChoice(str, Enum):
+    DAILY = "日常识图"
+    VISION_API = "API高精度视觉"
     STRUCTURED = "快速自动"
-    VISION = "高保真视觉"
+    VISION_WEB = "网页高保真视觉"
+    FORMAT_REPAIR = "格式修正"
+    VISION = "高保真视觉"  # 兼容旧任务 / 设置
+
+
+# 内部 picker ID → WorkflowChoice
+WORKFLOW_PICKER_MAP: dict[str, str] = {
+    "daily": WorkflowChoice.DAILY.value,
+    "vision_api": WorkflowChoice.VISION_API.value,
+    "structured": WorkflowChoice.STRUCTURED.value,
+    "vision_web": WorkflowChoice.VISION_WEB.value,
+    "format_repair": WorkflowChoice.FORMAT_REPAIR.value,
+    "vision": WorkflowChoice.VISION_WEB.value,
+}
+
+
+def normalize_workflow(workflow: str) -> str:
+    """旧值 vision / 高保真视觉 → 网页高保真。"""
+    w = (workflow or "").strip()
+    if w in (WorkflowChoice.VISION.value, "vision", "vision_web"):
+        return WorkflowChoice.VISION_WEB.value
+    if w in WORKFLOW_PICKER_MAP:
+        return WORKFLOW_PICKER_MAP[w]
+    for choice in WorkflowChoice:
+        if w == choice.value:
+            return choice.value
+    return WorkflowChoice.STRUCTURED.value
+
+
+def is_daily_workflow(workflow: str) -> bool:
+    return normalize_workflow(workflow) == WorkflowChoice.DAILY.value
+
+
+def is_structured_workflow(workflow: str) -> bool:
+    return normalize_workflow(workflow) == WorkflowChoice.STRUCTURED.value
+
+
+def is_vision_api_workflow(workflow: str) -> bool:
+    return normalize_workflow(workflow) == WorkflowChoice.VISION_API.value
+
+
+def is_vision_web_workflow(workflow: str) -> bool:
+    return normalize_workflow(workflow) == WorkflowChoice.VISION_WEB.value
+
+
+def is_format_repair_workflow(workflow: str) -> bool:
+    return normalize_workflow(workflow) == WorkflowChoice.FORMAT_REPAIR.value
+
+
+def is_vision_workflow(workflow: str) -> bool:
+    w = normalize_workflow(workflow)
+    return w in (WorkflowChoice.VISION_WEB.value, WorkflowChoice.VISION_API.value)
+
+
+@dataclass
+class DailyVisionJob:
+    """日常识图会话（非 PDF ConvertTask）。"""
+
+    image_paths: list[Path] = field(default_factory=list)
+    markdown: str = ""
+    status: str = TaskStatus.WAITING.value
+    error: str = ""
+    output_dir: Path | None = None
+    archive_mode: bool = False
 
 
 @dataclass
@@ -52,6 +117,7 @@ class ConvertTask:
             self.id = str(self.pdf_path.resolve())
         if not self.size_bytes and self.pdf_path.exists():
             self.size_bytes = self.pdf_path.stat().st_size
+        self.workflow = normalize_workflow(self.workflow)
 
     @property
     def name(self) -> str:

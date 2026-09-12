@@ -8,6 +8,39 @@ from app.vision_transcribe.recovery.failure_parse import (
     failed_pages_from_errors,
 )
 
+FORMAT_ONLY_ERRORS = [
+    "过短",
+    "结构缺失",
+    "标题缺失",
+    "表格异常",
+]
+
+HARD_FORMAT_BLOCKERS = [
+    "缺页",
+    "未找到",
+    "空页",
+    "异常过长",
+    "text_short",
+    "模型输出退化",
+    "公式",
+    "围栏",
+    "katex",
+    "剪贴板",
+    "example.com",
+    "重复页",
+    "多余页",
+    "顺序错误",
+]
+
+
+def _is_format_only(errors: list[str]) -> bool:
+    if not errors:
+        return False
+    lowered = [e.lower() for e in errors]
+    if not all(any(k in e for k in FORMAT_ONLY_ERRORS) for e in lowered):
+        return False
+    return not any(any(k in e for k in HARD_FORMAT_BLOCKERS) for e in lowered)
+
 
 def suggest_recovery(failure_class: str) -> str:
     """返回建议恢复动作：recopy | continue | page_retry | sub_batch | full_batch。"""
@@ -40,9 +73,10 @@ def plan_batch_recovery(
     page_retry_tried: bool = False,
     page_retry_pages: set[int] | None = None,
     sub_batch_tried: bool = False,
+    format_tried: bool = False,
     retry_count: int = 0,
 ) -> tuple[str, list[int]]:
-    """返回 (action, target_pages)。action ∈ recopy|page_retry|sub_batch|full_batch。"""
+    """返回 (action, target_pages)。format_fix 优先于单页/批次视觉重试。"""
     all_errs = list(errors or [])
     if error_text and error_text not in all_errs:
         all_errs.append(error_text)
@@ -52,6 +86,9 @@ def plan_batch_recovery(
 
     if fc == T.MODEL_DEGENERATION:
         return "full_batch", failed_pages_from_errors(all_errs)
+
+    if _is_format_only(all_errs) and not format_tried:
+        return "format_fix", []
 
     if hint == "recopy" and not recopy_tried:
         return "recopy", []

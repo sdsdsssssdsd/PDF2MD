@@ -255,6 +255,18 @@ class RepairPipeline:
             except Exception as e:
                 emit(f"Geometry 跳过：{e}")
 
+        after_issues = analyze_markdown(text)
+        after = 1.0 - risk_score(after_issues)
+        warnings = validate_markdown(text)
+        for w in warnings:
+            emit(f"校验警告：{w}")
+
+        from app.utils.typora_math_repair import lint_typora_math
+
+        typora_issues = lint_typora_math(text)
+        if typora_issues:
+            emit(f"Typora 兼容：{len(typora_issues)} 处待关注（见 repair.json typora_compat）")
+
         final_md.write_text(text, encoding="utf-8")
 
         # 按导出组件保留/删除产物（解析阶段总会生成 .raw.md 供修复）
@@ -275,18 +287,6 @@ class RepairPipeline:
                     emit(f"已按设置删除 {final_md.name}")
             except OSError:
                 pass
-
-        after_issues = analyze_markdown(text)
-        after = 1.0 - risk_score(after_issues)
-        warnings = validate_markdown(text)
-        for w in warnings:
-            emit(f"校验警告：{w}")
-
-        from app.utils.typora_math_repair import lint_typora_math
-
-        typora_issues = lint_typora_math(text)
-        if typora_issues:
-            emit(f"Typora 兼容：{len(typora_issues)} 处待关注（见 repair.json typora_compat）")
 
         report_path = None
         if cfg.write_repair_json:

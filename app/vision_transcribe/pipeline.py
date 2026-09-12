@@ -22,6 +22,7 @@ from app.vision_transcribe.document_validator import validate_document
 from app.vision_transcribe.figure_parser import parse_figure_markers
 from app.vision_transcribe.figure_store import load_figures_json, save_figures_json
 from app.vision_transcribe.figure_writeback import writeback_figures
+from app.vision_transcribe.formatter.engine import format_document
 from app.vision_transcribe.manifest import (
     VisionManifest,
     batch_dir,
@@ -72,6 +73,24 @@ class VisionPipeline:
         self.manifest: VisionManifest | None = load_manifest(self.output_dir)
         self._adapter: VisionWebAdapter | None = None
 
+    def _stamp_backend(self, m: VisionManifest) -> None:
+        backend = self.config.effective_backend()
+        if backend == "api":
+            from app.vision_api.config import VisionApiConfig
+
+            api_cfg = VisionApiConfig.from_settings()
+            m.backend = "deepseek_api"
+            m.provider = "deepseek"
+            m.model = api_cfg.model
+            m.transport = api_cfg.transport
+            m.detail = api_cfg.detail
+        else:
+            m.backend = backend
+            m.provider = "deepseek_web"
+            m.model = ""
+            m.transport = ""
+            m.detail = ""
+
     # —— 准备 ——
     def prepare(self, *, progress: ProgressFn | None = None, cancelled=None) -> VisionManifest:
         self.output_dir.mkdir(parents=True, exist_ok=True)
@@ -82,9 +101,10 @@ class VisionPipeline:
         m = self.manifest or VisionManifest()
         m.pdf = self.pdf_path.name
         m.render_scale = self.config.render_scale
-        m.batch_size = self.config.batch_size
+        m.batch_size = self.config.effective_batch_size()
         m.prompt_version = PROMPT_VERSION
         m.browser_mode = self.config.browser_mode
+        self._stamp_backend(m)
         m.state = PipelineState.RENDERING.value
         save_manifest(self.output_dir, m)
         self.manifest = m
@@ -112,8 +132,25 @@ class VisionPipeline:
         except Exception as exc:
             self._log(f"SourceGuard 跳过（{exc}）")
         if not m.batches:
-            m.set_batches(plan_batches(len(pages), self.config.batch_size))
+            m.set_batches(plan_batches(len(pages), self.config.effective_batch_size()))
         elif self.config.force_rerun:
+            expected = plan_batches(
+                len(pages), self.config.effective_batch_size()
+            )
+            current_layout = [
+                (b.start_page, b.end_page)
+                for b in m.get_batches()
+            ]
+            expected_layout = [
+                (b.start_page, b.end_page)
+                for b in expected
+            ]
+            if current_layout != expected_layout:
+                m.set_batches(expected)
+                self._log(
+                    f"强制重跑：批次布局更新为每批 "
+                    f"{self.config.effective_batch_size()} 页"
+                )
             self._restart_all_batches(
                 m,
                 reason="强制重跑",
@@ -142,6 +179,7 @@ class VisionPipeline:
                 batch_id=b.id,
             )
         m.browser_mode = self.config.browser_mode
+        self._stamp_backend(m)
         m.state = PipelineState.READY_TO_TRANSCRIBE.value
         save_manifest(self.output_dir, m)
         self._log(f"渲染完成 {len(pages)} 页，{len(m.batches)} 个批次")
@@ -242,12 +280,17 @@ class VisionPipeline:
     def get_adapter(self) -> VisionWebAdapter:
         if self._adapter is None:
             profile = self.config.resolve_profile_dir(self.app_root, self.output_dir)
-            self._adapter = create_adapter(
-                self.config.browser_mode,
-                profile_dir=profile,
-                url=self.config.deepseek_url,
-                log=self._log,
-            )
+            backend = self.config.effective_backend()
+            kw: dict = {
+                "profile_dir": profile,
+                "url": self.config.deepseek_url,
+                "log": self._log,
+            }
+            if backend == "api":
+                from app.vision_api.config import VisionApiConfig
+
+                kw["config"] = VisionApiConfig.from_settings()
+            self._adapter = create_adapter(backend, **kw)
         return self._adapter
 
     def close(self) -> None:
@@ -284,7 +327,7 @@ class VisionPipeline:
         return BatchPrep(batch=b, prompt=prompt, images=images, hint=hint)
 
     def try_auto_submit(self, batch: BatchInfo | None = None) -> AdapterResult | None:
-        """Playwright 模式尝试自动提交；clipboard 模式返回 needs_user。"""
+        """Playwright / API 自动提交；clipboard 模式返回 needs_user。"""
         prep = self.prepare_batch(batch)
         adapter = self.get_adapter()
         if hasattr(adapter, "set_capture_context"):
@@ -477,6 +520,40 @@ class VisionPipeline:
         self._log(f"batch {batch_id:04d} 已接受（仅软告警）")
         return True
 
+    def try_format_fix_batch(self, batch: BatchInfo) -> AdapterResult | None:
+        """Level-1：不重跑 Vision，先格式化现有 raw 并二次验证。"""
+        raw = read_raw_response(self.output_dir, batch.id) or ""
+        if not raw.strip():
+            return None
+        formatted = format_document(raw)
+        formatted_path = batch_dir(self.output_dir, batch.id) / "response.formatted.md"
+        formatted_path.write_text(formatted, encoding="utf-8")
+
+        m = self._ensure_manifest()
+        m.update_batch_status(batch.id, BatchStatus.VALIDATING.value, error="")
+        save_manifest(self.output_dir, m)
+        result = validate_and_write(
+            self.output_dir,
+            batch.id,
+            formatted,
+            start_page=batch.start_page,
+            end_page=batch.end_page,
+            prompt_version=m.prompt_version,
+        )
+        if result.ok:
+            write_accepted_response(self.output_dir, batch.id, formatted)
+            m.record_batch_acceptance(batch.id, formatted, self.output_dir)
+            m.update_batch_status(batch.id, BatchStatus.ACCEPTED.value)
+            save_manifest(self.output_dir, m)
+            self._log(f"batch {batch.id:04d} format_fix accepted")
+            return AdapterResult(markdown=formatted, needs_user=False)
+
+        err = "; ".join(result.errors)
+        m.update_batch_status(batch.id, BatchStatus.NEEDS_RETRY.value, error=err)
+        save_manifest(self.output_dir, m)
+        self._log(f"batch {batch.id:04d} format_fix needs_retry: {err}")
+        return AdapterResult(markdown="", needs_user=False, message=err)
+
     def resume_pending_submit(self) -> AdapterResult:
         """登录/验证后继续当前批次（子进程 resume）。"""
         adapter = self.get_adapter()
@@ -578,7 +655,11 @@ class VisionPipeline:
         for b in m.get_batches():
             clear_batch_artifacts(self.output_dir, b.id)
         vdir = vision_dir(self.output_dir)
-        for name in ("document.raw.md", "document.cleaned.md"):
+        for name in (
+            "document.raw.md",
+            "document.formatted.md",
+            "document.cleaned.md",
+        ):
             p = vdir / name
             if p.is_file():
                 p.unlink()
@@ -624,12 +705,15 @@ class VisionPipeline:
         save_manifest(self.output_dir, m)
         raw_path = merge_accepted_batches(self.output_dir, m)
 
-        # 合并后、清理前：用带 PAGE 标记的原文做全文校验
+        # 合并后先进入 Format Engine，再对格式化结果做全文校验
         raw_md = raw_path.read_text(encoding="utf-8")
+        formatted_md = format_document(raw_md)
+        formatted_path = vision_dir(self.output_dir) / "document.formatted.md"
+        formatted_path.write_text(formatted_md, encoding="utf-8")
         m.state = PipelineState.VALIDATING_DOCUMENT.value
         save_manifest(self.output_dir, m)
         doc_v = validate_document(
-            raw_md,
+            formatted_md,
             m.page_count,
             output_dir=self.output_dir,
             prompt_version=m.prompt_version or "",
@@ -641,14 +725,16 @@ class VisionPipeline:
 
         m.state = PipelineState.CLEANING.value
         save_manifest(self.output_dir, m)
-        cleaned_path = clean_and_write(self.output_dir, raw_md)
+        cleaned_path = clean_and_write(self.output_dir, formatted_md)
         try:
             from app.vision_transcribe.integrity.content_preservation import (
                 content_preservation_check,
             )
 
             cleaned_text = cleaned_path.read_text(encoding="utf-8")
-            ok_cp, cp_msg, cp_stats = content_preservation_check(raw_md, cleaned_text)
+            ok_cp, cp_msg, cp_stats = content_preservation_check(
+                formatted_md, cleaned_text
+            )
             if ok_cp:
                 self._log(
                     f"ContentPreservation ✓（drop {cp_stats.get('drop_ratio', 0):.1%}）"

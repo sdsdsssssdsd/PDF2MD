@@ -42,6 +42,24 @@ def test_main_window_minimum_and_defaults():
     w.close()
 
 
+def test_api_vision_force_rerun_control():
+    _app()
+    w = MainWindow()
+    assert w.cmb_api_precision.itemText(0) == "标准（10 页/批）"
+    assert w.cb_api_force_rerun.text() == "强制重跑 API 视觉转录"
+    assert w.cb_vision_force_rerun.text() == "强制重跑浏览器转录"
+    w.close()
+
+
+def test_format_repair_workspace_exists():
+    _app()
+    w = MainWindow()
+    assert w.format_repair_workspace is not None
+    assert "format_repair" in w.workflow_picker._buttons
+    assert w.workflow_picker._buttons["format_repair"].text().startswith("格式修正")
+    w.close()
+
+
 def test_experiment_core_columns_hidden_rest():
     assert len(CORE_COLUMNS) == 9
     assert len(_CORE_COLS) == 9
@@ -70,8 +88,8 @@ def test_formula_lab_default_table_cols():
 def test_settings_nav_and_env_table():
     _app()
     dlg = SettingsDialog()
-    assert dlg.nav.count() == 5
-    assert dlg.stack.count() == 5
+    assert dlg.nav.count() == 6
+    assert dlg.stack.count() == 6
     assert dlg.env_table.columnCount() == 3
     assert not dlg.parallel.isEnabled()
     dlg.close()

@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import json
 import re
+import time
 from pathlib import Path
 
 from app.vision_transcribe.manifest import batch_dir
@@ -16,15 +17,57 @@ _OMISSION_PATTERNS = [
     re.compile(r"\.\.\.\s*$", re.M),
 ]
 
+_CURRENCY_DOLLAR_RE = re.compile(
+    r"(?<!\\)\$(?=\d[\d.,]*(?:\s|$|[.,;:!?)\]-]))"
+)
+
+
+def _strip_currency_dollars(md: str) -> str:
+    """忽略没有后续配对符的 $50 / $50.00 货币金额，仅保留公式美元符。"""
+    lines: list[str] = []
+    for raw_line in (md or "").splitlines(keepends=True):
+        dollar_positions = [
+            m.start() for m in re.finditer(r"(?<!\\)\$", raw_line)
+        ]
+        currency_positions = {
+            match.start() for match in _CURRENCY_DOLLAR_RE.finditer(raw_line)
+        }
+        for pos in dollar_positions:
+            if pos > 0 and raw_line[pos - 1].isdigit():
+                if not any(other < pos for other in dollar_positions):
+                    currency_positions.add(pos)
+        non_currency_positions = [
+            pos for pos in dollar_positions if pos not in currency_positions
+        ]
+        if len(non_currency_positions) % 2 == 0:
+            drop = currency_positions
+        else:
+            keep = next(
+                (
+                    pos
+                    for pos in sorted(currency_positions)
+                    if any(other > pos for other in non_currency_positions)
+                ),
+                None,
+            )
+            drop = currency_positions - ({keep} if keep is not None else set())
+        if drop:
+            raw_line = "".join(
+                ch for i, ch in enumerate(raw_line) if i not in drop
+            )
+        lines.append(raw_line)
+    return "".join(lines)
+
 
 def _math_fence_ok(md: str) -> list[str]:
     errors: list[str] = []
+    scan = _strip_currency_dollars(md or "")
     # display $$ 计数（忽略行内偶发）
-    dollars = re.findall(r"\$\$", md)
+    dollars = re.findall(r"\$\$", scan)
     if len(dollars) % 2 != 0:
         errors.append("行间公式 $$ 围栏不成对")
     # 粗略：奇数个未转义 $（排除 $$）
-    tmp = re.sub(r"\$\$", "", md)
+    tmp = re.sub(r"\$\$", "", scan)
     singles = len(re.findall(r"(?<!\\)\$", tmp))
     if singles % 2 != 0:
         errors.append("行内公式 $ 围栏可能不成对")
@@ -146,9 +189,8 @@ def validate_batch_markdown(
             ):
                 min_len = min_chars_for_single_page(start_page, body=body)
                 if len((md or "").strip()) < min_len * 2:
-                    errors.append(
-                        "Markdown 结构缺失（复制压平：无 # 标题 / | 表格 |），"
-                        "须完整保留 DeepSeek 回答"
+                    warnings.append(
+                        "Markdown 结构较少，进入格式修复阶段"
                     )
     except Exception:
         pass
@@ -196,6 +238,8 @@ def validate_and_write(
     prompt_version: str = "",
 ) -> ValidationResult:
     from app.vision_transcribe.prompts import PROMPT_VERSION
+    from app.vision_transcribe.page_classifier import analyze_batch_pages
+    from app.vision_transcribe.raw_store import save_analysis, save_metadata
 
     pv = prompt_version or PROMPT_VERSION
     result = validate_batch_markdown(
@@ -211,5 +255,25 @@ def validate_and_write(
     (d / "validation.json").write_text(
         json.dumps(result.to_dict(), ensure_ascii=False, indent=2) + "\n",
         encoding="utf-8",
+    )
+    report = analyze_batch_pages(
+        md or "",
+        start_page=start_page,
+        end_page=end_page,
+    )
+    save_analysis(d, report)
+    save_metadata(
+        d,
+        {
+            "batch_id": batch_id,
+            "start_page": start_page,
+            "end_page": end_page,
+            "prompt_version": pv,
+            "chars": len((md or "").strip()),
+            "ok": result.ok,
+            "error_count": len(result.errors),
+            "warning_count": len(result.warnings),
+            "generated_at": time.strftime("%Y-%m-%dT%H:%M:%S%z"),
+        },
     )
     return result

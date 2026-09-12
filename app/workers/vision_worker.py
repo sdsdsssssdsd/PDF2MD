@@ -7,9 +7,9 @@ from pathlib import Path
 
 from PySide6.QtCore import QMutex, QThread, Signal, QWaitCondition
 
-from app.task_model import ConvertTask, TaskStatus, WorkflowChoice
+from app.task_model import ConvertTask, TaskStatus, WorkflowChoice, normalize_workflow
 from app.utils.logger import get_logger
-from app.utils.paths import vision_task_output_dir
+from app.utils.paths import resolve_vision_output_dir
 from app.vision_transcribe.config import VisionConfig
 from app.vision_transcribe.manifest import vision_dir
 from app.vision_transcribe.models import BatchStatus, PipelineState
@@ -52,13 +52,18 @@ class VisionConversionWorker(QThread):
         self._current_batch_id: int | None = None
         self._batch_auto_retries: dict[int, int] = {}
         self._batch_recopy_tried: dict[int, bool] = {}
+        self._batch_format_tried: dict[int, bool] = {}
         self._batch_page_retry_tried: dict[int, bool] = {}
         self._batch_page_retry_pages: dict[int, set[int]] = {}
         self._batch_sub_batch_tried: dict[int, bool] = {}
         self._batch_server_busy_waits: dict[int, int] = {}
 
     def _is_auto_browser(self) -> bool:
-        return self._config.browser_mode in ("playwright", "deepseek", "auto")
+        backend = self._config.effective_backend()
+        return backend in ("playwright", "deepseek", "auto", "api")
+
+    def _is_api_mode(self) -> bool:
+        return self._config.effective_backend() == "api"
 
     def _emit_log(self, msg: str) -> None:
         """子进程/Pipeline 状态 → GUI 信号 + 落盘（后台可监察）。"""
@@ -206,8 +211,9 @@ class VisionConversionWorker(QThread):
                     self._current_pipeline = None
 
     def _run_one(self, task: ConvertTask) -> None:
-        task.workflow = WorkflowChoice.VISION.value
-        out = vision_task_output_dir(self._output_root, task.pdf_path)
+        wf = normalize_workflow(task.workflow or WorkflowChoice.VISION_WEB.value)
+        task.workflow = wf
+        out = resolve_vision_output_dir(self._output_root, task.pdf_path, wf)
         task.output_dir = out
         self.task_status.emit(task.id, TaskStatus.RUNNING.value, "页面渲染")
         self.pipeline_stage.emit("render")
@@ -232,6 +238,7 @@ class VisionConversionWorker(QThread):
 
         self._batch_auto_retries = {}
         self._batch_recopy_tried = {}
+        self._batch_format_tried = {}
         self._batch_page_retry_tried = {}
         self._batch_page_retry_pages = {}
         self._batch_sub_batch_tried = {}
@@ -299,6 +306,7 @@ class VisionConversionWorker(QThread):
                         sub_batch_tried=self._batch_sub_batch_tried.get(
                             batch.id, False
                         ),
+                        format_tried=self._batch_format_tried.get(batch.id, False),
                         retry_count=tries,
                     )
 
@@ -306,16 +314,36 @@ class VisionConversionWorker(QThread):
                         if pipe.force_accept_batch(batch.id):
                             continue
 
+                    if action == "format_fix":
+                        self._batch_format_tried[batch.id] = True
+                        self.log_line.emit(
+                            f"批次 {batch.start_page}–{batch.end_page} "
+                            "Level-1 格式修复后二次验证…"
+                        )
+                        fr = pipe.try_format_fix_batch(batch)
+                        if fr and (fr.markdown or "").strip():
+                            refreshed = {
+                                b.id: b
+                                for b in pipe._ensure_manifest().get_batches()
+                            }.get(batch.id)
+                            if (
+                                refreshed is not None
+                                and refreshed.status == BatchStatus.ACCEPTED.value
+                            ):
+                                continue
+
                     if action == "full_batch" and any(
                         "模型输出退化" in e for e in val_errs
-                    ):
+                    ) and not self._is_api_mode():
                         self.log_line.emit(
                             "检测到模型输出退化，重启浏览器子进程后全量重提…"
                         )
                         pipe.close()
 
-                    if action == "recopy" and not self._batch_recopy_tried.get(
-                        batch.id
+                    if (
+                        action == "recopy"
+                        and not self._batch_recopy_tried.get(batch.id)
+                        and not self._is_api_mode()
                     ):
                         self._batch_recopy_tried[batch.id] = True
                         self.log_line.emit(
@@ -392,9 +420,10 @@ class VisionConversionWorker(QThread):
                                 continue
 
                     self._batch_auto_retries[batch.id] = tries + 1
+                    retry_label = "API" if self._is_api_mode() else "浏览器"
                     self.log_line.emit(
                         f"批次 {batch.start_page}–{batch.end_page} 校验未通过，"
-                        f"Level-4 全量重提浏览器（{tries + 1}/{max_auto_retry}）…"
+                        f"Level-4 全量重提{retry_label}（{tries + 1}/{max_auto_retry}）…"
                     )
                     pipe.reset_batch_for_browser_retry(batch.id)
                     refreshed = {
@@ -403,10 +432,24 @@ class VisionConversionWorker(QThread):
                     if refreshed is not None:
                         batch = refreshed
 
-                self.task_status.emit(
-                    task.id, TaskStatus.RUNNING.value, "启动浏览器（子进程）…"
-                )
-                result = self._try_auto_submit_with_cooldown(task.id, pipe, batch)
+                if self._is_api_mode():
+                    self.task_status.emit(
+                        task.id, TaskStatus.RUNNING.value, "Vision API 转录…"
+                    )
+                    result = pipe.try_auto_submit(batch)
+                else:
+                    self.task_status.emit(
+                        task.id, TaskStatus.RUNNING.value, "启动浏览器（子进程）…"
+                    )
+                    result = self._try_auto_submit_with_cooldown(task.id, pipe, batch)
+                if self._is_api_mode():
+                    if result and not (result.markdown or "").strip() and result.message:
+                        raise RuntimeError(result.message)
+                    still = pipe.next_pending_batch()
+                    if still and still.id == batch.id:
+                        err = still.error or "校验未通过"
+                        self.log_line.emit(f"API 批次校验失败：{err}；将自动重试")
+                    continue
                 while result and result.needs_user:
                     hint = result.message or "需要人工处理浏览器"
                     if any(k in hint for k in ("登录", "验证", "验证码")):

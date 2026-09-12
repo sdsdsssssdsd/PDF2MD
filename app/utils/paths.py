@@ -82,3 +82,30 @@ def task_output_dir(output_root: Path, pdf_path: Path, per_folder: bool) -> Path
 def vision_task_output_dir(output_root: Path, pdf_path: Path) -> Path:
     """高保真模式：在选定输出目录下创建「Pdf名_高保真」文件夹。"""
     return Path(output_root) / f"{pdf_path.stem}_高保真"
+
+
+def vision_api_task_output_dir(output_root: Path, pdf_path: Path) -> Path:
+    """API 高精度视觉：Pdf名_API视觉。"""
+    return Path(output_root) / f"{pdf_path.stem}_API视觉"
+
+
+def resolve_vision_output_dir(output_root: Path, pdf_path: Path, workflow: str) -> Path:
+    from app.task_model import is_vision_api_workflow, normalize_workflow
+
+    wf = normalize_workflow(workflow)
+    if is_vision_api_workflow(wf):
+        return vision_api_task_output_dir(output_root, pdf_path)
+    return vision_task_output_dir(output_root, pdf_path)
+
+
+def daily_archive_root(output_root: Path) -> Path:
+    return Path(output_root) / "日常识图"
+
+
+def daily_archive_dir(output_root: Path, label: str = "截图") -> Path:
+    from datetime import datetime
+    import re
+
+    stamp = datetime.now().strftime("%Y-%m-%d_%H%M")
+    safe = re.sub(r'[<>:"/\\|?*]', "_", (label or "截图").strip())[:40] or "截图"
+    return daily_archive_root(output_root) / f"{stamp}_{safe}"

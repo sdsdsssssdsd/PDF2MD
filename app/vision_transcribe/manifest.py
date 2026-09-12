@@ -27,6 +27,11 @@ class VisionManifest:
     batches: list[dict[str, Any]] = field(default_factory=list)
     figures: list[dict[str, Any]] = field(default_factory=list)
     browser_mode: str = "clipboard"
+    backend: str = ""
+    provider: str = ""
+    model: str = ""
+    transport: str = ""
+    detail: str = ""
 
     def to_dict(self) -> dict[str, Any]:
         return asdict(self)
@@ -168,6 +173,12 @@ class VisionManifest:
             b["confidence"] = confidence
             b["extract_source"] = source
             b["pages"] = pages_meta
+            if stats.get("backend") == "deepseek_api":
+                b["api_request_id"] = str(stats.get("request_id") or "")
+                b["input_tokens"] = stats.get("input_tokens")
+                b["output_tokens"] = stats.get("output_tokens")
+                b["latency_ms"] = stats.get("latency_ms")
+                b["retry_count"] = max(0, attempt_n - 1)
             break
         self.version = max(int(self.version), MANIFEST_VERSION)
 

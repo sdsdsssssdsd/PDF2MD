@@ -7,8 +7,9 @@ from pathlib import Path
 from app.vision_transcribe.capture.page_split import PageSlice, split_pages
 from app.vision_transcribe.integrity.source_guard import check_page_anchors, load_page_guard
 from app.vision_transcribe.models import BATCH_END_RE, PAGE_END_RE
+from app.vision_transcribe.page_classifier import classify_page
 from app.vision_transcribe.prompts import PROMPT_VERSION
-from app.vision_transcribe.transcript_quality import is_references_heavy, min_chars_for_page_span
+from app.vision_transcribe.transcript_quality import is_references_heavy
 
 _FIGURE_MARKER_RE = re.compile(r"<!--\s*PDF2MD:FIGURE:", re.I)
 # 允许 **Figure 6.** / Figure 6. / Fig. 6
@@ -123,16 +124,21 @@ def validate_page_integrity(
         sl = slices.get(p)
         if sl is None:
             continue
-        min_c = min_chars_for_single_page(p, body=sl.body)
-        if sl.chars < min_c:
+        ptype = classify_page(sl.body)
+        min_c = ptype.min_chars
+        if sl.chars == 0:
+            errors.append(f"PAGE {p:04d} 空页（无正文）")
+        elif sl.chars < min_c:
             near_miss = sl.has_end and sl.chars >= int(min_c * _NEAR_MISS_RATIO)
-            if near_miss:
+            if near_miss or ptype.risk == "low":
                 warnings.append(
-                    f"PAGE {p:04d} 略短（{sl.chars} 字，期望 ≥{min_c}），已放行"
+                    f"PAGE {p:04d} low text density "
+                    f"classification:{ptype.name} action:FORMAT_NORMALIZE"
                 )
             else:
                 errors.append(
-                    f"PAGE {p:04d} 过短（{sl.chars} 字，期望 ≥{min_c}）"
+                    f"PAGE {p:04d} 过短（{sl.chars} 字，"
+                    f"classification:{ptype.name} 期望 ≥{min_c}）"
                 )
         if sl.chars > _MAX_SANE_PAGE_CHARS:
             from app.vision_transcribe.transcript_quality import has_model_degeneration
@@ -163,20 +169,5 @@ def validate_page_integrity(
                 warnings.append(
                     f"BATCH_END 批次号不符: got={found} expected={batch_id:04d}"
                 )
-
-    # 批次总字数仍作兜底（兼容旧逻辑）
-    n_pages = end_page - start_page + 1
-    if n_pages == 1:
-        sl = slices.get(start_page)
-        batch_min = min_chars_for_single_page(
-            start_page, body=sl.body if sl else ""
-        )
-    else:
-        batch_min = min_chars_for_page_span(start_page, end_page)
-    if len((md or "").strip()) < batch_min:
-        errors.append(
-            f"批次过短（{len((md or '').strip())} 字，"
-            f"{n_pages} 页期望 ≥{batch_min}）"
-        )
 
     return errors, warnings, slices

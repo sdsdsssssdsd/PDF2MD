@@ -55,7 +55,15 @@ def clear_batch_response_only(output_dir: Path, batch_id: int) -> None:
     d = batch_dir(output_dir, batch_id)
     if not d.is_dir():
         return
-    for name in ("response.raw.md", "response.md", "validation.json", "extract_stats.json"):
+    for name in (
+        "response.raw.md",
+        "response.formatted.md",
+        "response.md",
+        "validation.json",
+        "extract_stats.json",
+        "metadata.json",
+        "analysis.json",
+    ):
         p = d / name
         if p.is_file():
             p.unlink()

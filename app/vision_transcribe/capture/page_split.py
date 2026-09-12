@@ -4,7 +4,7 @@ from __future__ import annotations
 import re
 from dataclasses import dataclass
 
-from app.vision_transcribe.models import PAGE_END_RE, PAGE_MARKER_RE
+from app.vision_transcribe.models import BATCH_BEGIN_RE, BATCH_END_RE, PAGE_END_RE, PAGE_MARKER_RE
 
 
 @dataclass
@@ -45,6 +45,8 @@ def split_pages(md: str) -> dict[int, PageSlice]:
         body = parts[i + 1] if i + 1 < len(parts) else ""
         body = PAGE_END_RE.sub("", body)
         body = PAGE_MARKER_RE.sub("", body)
+        body = BATCH_END_RE.sub("", body)
+        body = BATCH_BEGIN_RE.sub("", body)
         out[page_no] = PageSlice(
             page=page_no,
             body=body.strip(),

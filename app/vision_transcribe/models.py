@@ -52,6 +52,42 @@ class PageInfo:
 
 
 @dataclass
+class PageAnalysis:
+    page: int
+    page_type: str = "unknown"
+    chars: int = 0
+    image_ratio: float = 0
+    need_format_fix: bool = False
+    risk: str = "low"
+
+    def to_dict(self) -> dict:
+        return {
+            "page": self.page,
+            "page_type": self.page_type,
+            "chars": self.chars,
+            "image_ratio": round(float(self.image_ratio), 3),
+            "need_format_fix": self.need_format_fix,
+            "risk": self.risk,
+        }
+
+
+@dataclass
+class VisionQualityReport:
+    pages: list[PageAnalysis] = field(default_factory=list)
+    score: float = 100
+    warnings: list[str] = field(default_factory=list)
+    errors: list[str] = field(default_factory=list)
+
+    def to_dict(self) -> dict:
+        return {
+            "pages": [p.to_dict() for p in self.pages],
+            "score": round(float(self.score), 2),
+            "warnings": self.warnings,
+            "errors": self.errors,
+        }
+
+
+@dataclass
 class BatchInfo:
     id: int
     start_page: int

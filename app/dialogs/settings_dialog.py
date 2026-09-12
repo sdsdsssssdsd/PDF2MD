@@ -35,7 +35,7 @@ from app.workers.env_worker import EnvProbeWorker
 ORG = "PDF2MD"
 APP = "PDF2MD"
 
-_NAV = ("常规", "转换", "输出", "外观", "环境")
+_NAV = ("常规", "转换", "DeepSeek API", "输出", "外观", "环境")
 
 
 def settings() -> QSettings:
@@ -75,6 +75,7 @@ def load_defaults() -> dict:
         "keep_refs": s.value("keep_refs", True, type=bool),
         "images_scale": float(s.value("images_scale", 3.0)),
         "image_path_mode": s.value("image_path_mode", "relative"),
+        "default_workflow": s.value("default_workflow", "daily"),
     }
 
 
@@ -112,6 +113,7 @@ class SettingsDialog(QDialog):
         self.stack = QStackedWidget()
         self.stack.addWidget(self._page_general(cfg))
         self.stack.addWidget(self._page_convert(cfg))
+        self.stack.addWidget(self._page_deepseek_api())
         self.stack.addWidget(self._page_output(cfg))
         self.stack.addWidget(self._page_look(cfg))
         self.stack.addWidget(self._page_env())
@@ -131,7 +133,7 @@ class SettingsDialog(QDialog):
 
     def _on_nav(self, index: int) -> None:
         self.stack.setCurrentIndex(index)
-        if index == 4:
+        if index == 5:
             self._ensure_env_probe()
 
     def _ensure_env_probe(self) -> None:
@@ -222,6 +224,100 @@ class SettingsDialog(QDialog):
         lay.addWidget(card)
         lay.addStretch(1)
         return page
+
+    def _page_deepseek_api(self) -> QWidget:
+        from app.vision_api.config import (
+            DEFAULT_API_BASE,
+            DEFAULT_TIMEOUT_S,
+            DEFAULT_VISION_MODEL,
+            VisionApiConfig,
+        )
+        from app.vision_api.key_store import get_api_key, set_api_key
+
+        page = QWidget()
+        lay = QVBoxLayout(page)
+        lay.setContentsMargins(0, 0, 0, 0)
+        card = SectionCard(
+            "DeepSeek Vision API",
+            "用于「日常识图」与「API 高精度视觉」。Key 存 Credential Manager 或环境变量。",
+        )
+        form = QFormLayout()
+        cfg = VisionApiConfig.from_settings()
+        self.api_base = QLineEdit(cfg.api_base or DEFAULT_API_BASE)
+        form.addRow("API Base URL：", self.api_base)
+        self.api_model = QLineEdit(cfg.model or DEFAULT_VISION_MODEL)
+        form.addRow("Vision Model：", self.api_model)
+        self.api_key = QLineEdit()
+        self.api_key.setEchoMode(QLineEdit.EchoMode.Password)
+        self.api_key.setPlaceholderText("留空则保留已保存的 Key")
+        form.addRow("API Key：", self.api_key)
+        self.api_transport = QComboBox()
+        self.api_transport.addItems(["自动", "Base64", "Files API"])
+        tmap = {"auto": 0, "base64": 1, "file_id": 2}
+        self.api_transport.setCurrentIndex(tmap.get(cfg.transport, 0))
+        form.addRow("图片传输：", self.api_transport)
+        self.api_detail = QComboBox()
+        self.api_detail.addItems(["Original", "High", "Low"])
+        dmap = {"original": 0, "high": 1, "low": 2}
+        self.api_detail.setCurrentIndex(dmap.get(cfg.detail, 0))
+        form.addRow("Detail：", self.api_detail)
+        self.api_timeout = QSpinBox()
+        self.api_timeout.setRange(30, 900)
+        self.api_timeout.setValue(int(cfg.timeout_s or DEFAULT_TIMEOUT_S))
+        form.addRow("Request Timeout (s)：", self.api_timeout)
+        self.api_auto_retry = QCheckBox("自动重试")
+        self.api_auto_retry.setChecked(bool(cfg.auto_retry))
+        form.addRow(self.api_auto_retry)
+        key_hint = QLabel("也可设置环境变量 DEEPSEEK_API_KEY。日志不会输出 Key。格式修正模式直接调用此 API。")
+        key_hint.setWordWrap(True)
+        key_hint.setProperty("role", "subtle")
+        form.addRow("", key_hint)
+        btn_test = QPushButton("测试连接")
+        btn_test.clicked.connect(self._test_deepseek_api)
+        form.addRow("", btn_test)
+        self.lbl_api_test = QLabel("")
+        self.lbl_api_test.setProperty("role", "muted")
+        form.addRow("", self.lbl_api_test)
+        card.body.addLayout(form)
+        lay.addWidget(card)
+        lay.addStretch(1)
+        if get_api_key():
+            self.api_key.setPlaceholderText("已配置（输入新 Key 可覆盖）")
+        return page
+
+    def _test_deepseek_api(self) -> None:
+        self._save_deepseek_api_only()
+        self.lbl_api_test.setText("连接中…")
+        try:
+            from app.vision_api.client import DeepSeekVisionClient
+
+            client = DeepSeekVisionClient()
+            text_result = client.test_connection()
+            preview = (text_result.markdown or "OK")[:24]
+            self.lbl_api_test.setText(f"文本 OK · {preview} · 视觉探测中…")
+            vis = client.test_vision()
+            vprev = (vis.markdown or "OK")[:24]
+            self.lbl_api_test.setText(
+                f"成功 · 文本={preview or 'OK'} · 视觉={vprev or 'OK'} · 模型 {client.config.model}"
+            )
+        except Exception as e:
+            self.lbl_api_test.setText(f"失败：{e}")
+
+    def _save_deepseek_api_only(self) -> None:
+        from app.vision_api.key_store import set_api_key
+
+        s = settings()
+        s.setValue("deepseek_api_base", self.api_base.text().strip())
+        s.setValue("deepseek_vision_model", self.api_model.text().strip())
+        transport_rev = {0: "auto", 1: "base64", 2: "file_id"}
+        detail_rev = {0: "original", 1: "high", 2: "low"}
+        s.setValue("deepseek_api_transport", transport_rev.get(self.api_transport.currentIndex(), "auto"))
+        s.setValue("deepseek_api_detail", detail_rev.get(self.api_detail.currentIndex(), "original"))
+        s.setValue("deepseek_api_timeout", self.api_timeout.value())
+        s.setValue("deepseek_api_auto_retry", self.api_auto_retry.isChecked())
+        key_text = self.api_key.text().strip()
+        if key_text:
+            set_api_key(key_text)
 
     def _page_output(self, cfg: dict) -> QWidget:
         page = QWidget()
@@ -323,6 +419,8 @@ class SettingsDialog(QDialog):
         self._add_env_row("DeepSeek daemon", ds_state, ds)
 
     def _save(self) -> None:
+        if hasattr(self, "api_base"):
+            self._save_deepseek_api_only()
         ocr_rev = {"自动": "auto", "强制 OCR": "force", "禁用 OCR": "disable"}
         s = settings()
         s.setValue("engine", self.engine.currentText())

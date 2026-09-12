@@ -59,6 +59,59 @@ def test_validator_accept():
     assert r.ok, r.errors
 
 
+def test_page_classifier_screenshot_and_short_text():
+    from app.vision_transcribe.page_classifier import classify_page
+
+    assert classify_page("Click on Save to create the customer record.").name == "screenshot"
+    assert classify_page("Figure 10. Mean |(SHAP value)|.").name == "image"
+    assert classify_page("Introduction").name == "title"
+    assert classify_page("short").name == "text_short"
+
+
+def test_validator_accepts_low_density_screenshot_page():
+    from app.vision_transcribe.prompts import PROMPT_VERSION
+
+    md = (
+        "<!-- PDF2MD:PAGE:0029 -->\n"
+        "Click Save\n"
+        "<!-- PDF2MD:PAGE_END:0029 -->\n"
+        "<!-- PDF2MD:BATCH_END:0008 -->\n"
+    )
+    r = validate_batch_markdown(
+        md,
+        start_page=29,
+        end_page=29,
+        batch_id=8,
+        prompt_version=PROMPT_VERSION,
+    )
+    assert r.ok, r.errors
+    assert any("low text density" in w for w in r.warnings)
+
+
+def test_validate_and_write_creates_raw_layer_files(tmp_path: Path):
+    from app.vision_transcribe.batch_validator import validate_and_write
+    from app.vision_transcribe.raw_store import load_analysis
+
+    md = (
+        "<!-- PDF2MD:PAGE:0001 -->\n"
+        + ("Normal academic paragraph. " * 20)
+        + "\n<!-- PDF2MD:PAGE_END:0001 -->\n"
+    )
+    result = validate_and_write(
+        tmp_path,
+        1,
+        md,
+        start_page=1,
+        end_page=1,
+        prompt_version=PROMPT_VERSION,
+    )
+    assert result.ok, result.errors
+    batch = tmp_path / ".vision" / "batches" / "batch_0001"
+    assert (batch / "metadata.json").is_file()
+    analysis = load_analysis(batch)
+    assert analysis["pages"][0]["page_type"] == "text"
+
+
 def test_validator_reject_missing():
     md = "<!-- PDF2MD:PAGE:0001 -->\nA\n<!-- PDF2MD:PAGE:0003 -->\nC\n"
     r = validate_batch_markdown(md, start_page=1, end_page=3)
@@ -262,6 +315,24 @@ def test_validator_rejects_katex_scrap():
     r = validate_batch_markdown(md, start_page=1, end_page=2)
     assert not r.ok
     assert any("竖排" in e for e in r.errors)
+
+
+def test_math_fence_ignores_currency_dollar_amounts():
+    from app.vision_transcribe.batch_validator import _math_fence_ok
+
+    md = (
+        "Give a $50.00 discount on each bike.\n"
+        "To add the $50, select the line.\n"
+        "The 5% discount applies after the $50 discount.\n"
+    )
+    assert _math_fence_ok(md) == []
+    assert _math_fence_ok("Subtotal $50 and tax $5") == []
+    assert _math_fence_ok("The company gets 50$ discount.") == []
+    assert _math_fence_ok("Formula $50 + x$ costs $100") == []
+    assert _math_fence_ok("Inline math is $50$") == []
+    assert _math_fence_ok("Inline math is $x + 1 but incomplete") == [
+        "行内公式 $ 围栏可能不成对"
+    ]
 
 
 def test_clipboard_sanitize_strips_sidebar_and_prompt():
@@ -479,6 +550,29 @@ def test_validator_v2_reject_short_page():
     )
     assert not r.ok
     assert any("过短" in e for e in r.errors)
+
+
+def test_validator_accepts_visual_batch_below_legacy_total_threshold():
+    from app.vision_transcribe.prompts import PROMPT_VERSION
+
+    parts = []
+    for p in range(5, 9):
+        parts.append(
+            f"<!-- PDF2MD:PAGE:{p:04d} -->\n"
+            + ("SAP operation step and field value. " * 27)
+            + f"\n<!-- PDF2MD:PAGE_END:{p:04d} -->\n"
+        )
+    md = "".join(parts) + "<!-- PDF2MD:BATCH_END:0002 -->\n"
+    assert 3500 < len(md.strip()) < 4800
+
+    r = validate_batch_markdown(
+        md,
+        start_page=5,
+        end_page=8,
+        batch_id=2,
+        prompt_version=PROMPT_VERSION,
+    )
+    assert r.ok, r.errors
 
 
 def test_validator_figure_heavy_short_page_ok():
@@ -747,6 +841,7 @@ def test_plan_batch_recovery_skips_retried_pages():
             "PAGE 0016 过短（145 字，期望 ≥280）",
         ],
         recopy_tried=True,
+        format_tried=True,
         page_retry_pages={13},
     )
     assert action == "page_retry"
@@ -779,6 +874,7 @@ def test_plan_batch_recovery_page_retry():
     action, pages = plan_batch_recovery(
         errors=["PAGE 0004 过短（120 字，期望 ≥280）"],
         recopy_tried=True,
+        format_tried=True,
         page_retry_tried=False,
     )
     assert action == "page_retry"
@@ -794,11 +890,23 @@ def test_plan_batch_recovery_sub_batch():
             "PAGE 0005 过短（90 字）",
         ],
         recopy_tried=True,
+        format_tried=True,
         page_retry_tried=True,
         sub_batch_tried=False,
     )
     assert action == "sub_batch"
     assert pages == [4, 5]
+
+
+def test_plan_batch_recovery_format_fix_first():
+    from app.vision_transcribe.recovery.planner import plan_batch_recovery
+
+    action, pages = plan_batch_recovery(
+        errors=["PAGE 0004 过短（120 字，期望 ≥280）"],
+        recopy_tried=True,
+    )
+    assert action == "format_fix"
+    assert pages == []
 
 
 def test_pick_copy_consensus_prefers_majority_longer():
@@ -1010,8 +1118,12 @@ def test_batch_transcript_complete_requires_all_pages():
     partial = "<!-- PDF2MD:PAGE:0001 -->\n" + ("x" * 25_000)
     assert not batch_transcript_complete(partial, start_page=1, end_page=10)
 
-    full = "".join(f"<!-- PDF2MD:PAGE:{p:04d} -->\n" for p in range(1, 11))
-    full += "x" * 15_000
+    full = "".join(
+        f"<!-- PDF2MD:PAGE:{p:04d} -->\n"
+        + ("Academic paragraph. " * 12)
+        + "\n"
+        for p in range(1, 11)
+    )
     assert batch_transcript_complete(full, start_page=1, end_page=10)
 
 

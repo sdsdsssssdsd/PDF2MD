@@ -145,29 +145,26 @@ def looks_truncated_transcript(
 
     if start_page is not None and end_page is not None:
         n_batch = end_page - start_page + 1
-        if n_batch == 1:
-            from app.vision_transcribe.capture.page_split import split_pages
-            from app.vision_transcribe.integrity.page_guard import (
-                min_chars_for_single_page,
-            )
+        from app.vision_transcribe.integrity.page_guard import validate_page_integrity
 
-            slices = split_pages(t)
-            sl = slices.get(start_page)
-            min_len = min_chars_for_single_page(
-                start_page, body=sl.body if sl else t
-            )
-        else:
-            min_len = min_chars_for_page_span(start_page, end_page)
-        if len(t) < min_len:
+        pg_errs, _pg_warns, _slices = validate_page_integrity(
+            t,
+            start_page=start_page,
+            end_page=end_page,
+            batch_id=0,
+            output_dir=None,
+            prompt_version="",
+        )
+        if pg_errs:
             return True
         expected = set(range(start_page, end_page + 1))
         found = set(pages)
         if found == expected:
             return False
         # 单页参考文献偶发缺 PAGE：字数够 + 文献特征 → 交给 batch_validator 告警
-        if n_batch == 1 and len(t) >= min_len and is_references_heavy(t):
+        if n_batch == 1 and is_references_heavy(t):
             return False
-        if not found and n_batch == 1 and len(t) >= min_len * 2:
+        if not found and n_batch == 1:
             return False
         return True
 
