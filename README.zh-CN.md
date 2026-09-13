@@ -270,7 +270,6 @@ PDF2MD/
 ├── scripts/
 ├── tests/
 ├── docs/images/
-├── .cursor/rules/
 └── run_gui.py
 ```
 

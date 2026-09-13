@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import json
+import os
 import subprocess
 import sys
 from datetime import datetime
@@ -11,7 +12,7 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
 PADDLE = ROOT / ".venv-paddle-formula" / "Scripts" / "python.exe"
-PY = Path(r"python")
+PY = Path(os.environ.get("PDF2MD_PYTHON") or sys.executable)
 GOLD = ROOT / "benchmarks" / "gold" / "verified_all.jsonl"
 RES = ROOT / "benchmarks" / "results"
 LOG = RES / f"k5_pipeline_{datetime.now().strftime('%Y%m%d_%H%M%S')}.log"

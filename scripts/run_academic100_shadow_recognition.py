@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import subprocess
 import sys
 from datetime import datetime
@@ -19,7 +20,7 @@ from app.ocr.k5_taxonomy import summarize_shadow, simulate_shadow_writeback  # n
 from app.utils.paths import K5_GOLD_DIR, K5_MANIFESTS_DIR, K5_RESULTS_DIR, ensure_dirs  # noqa: E402
 
 PADDLE = ROOT / ".venv-paddle-formula" / "Scripts" / "python.exe"
-PY = Path(r"python")
+PY = Path(os.environ.get("PDF2MD_PYTHON") or sys.executable)
 SUBSET = K5_GOLD_DIR / "harvest_display_regression.jsonl"
 PP_OUT = K5_RESULTS_DIR / "pp_m_academic100_regression_tight.json"
 VL_OUT = K5_RESULTS_DIR / "paddlevl_academic100_regression_tight.json"

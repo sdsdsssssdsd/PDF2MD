@@ -29,7 +29,7 @@ License: **Apache-2.0** — see [`LICENSE`](LICENSE) and [`NOTICE`](NOTICE).
 
 ## Screenshots
 
-Same academic excerpt — **PDF before** vs **Markdown after** (structured workflow).
+Synthetic document excerpt — **PDF before** vs **Markdown after** (structured workflow).
 
 **Before · PDF**
 
@@ -286,7 +286,6 @@ PDF2MD/
 ├── scripts/
 ├── tests/
 ├── docs/images/
-├── .cursor/rules/            # Markdown / UI hard rules
 ├── run_gui.py
 └── requirements.txt
 ```

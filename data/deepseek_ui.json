@@ -160,7 +160,6 @@
   "notes": "DeepSeek web UI screenshot templates; run scripts/calibrate_deepseek_ui.py to recalibrate",
   "recorded_workflow": {
     "enabled": true,
-    "recorded_at": "2026-08-24T04:21:19.986690+00:00",
     "viewport": {
       "width": 1400,
       "height": 900

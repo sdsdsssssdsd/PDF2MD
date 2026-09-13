@@ -60,6 +60,7 @@ Thumbs.db
 Desktop.ini
 .idea/
 .vscode/
+.cursor/
 *.swp
 *.swo
 *.lnk
@@ -89,7 +90,19 @@ outputs/
 # Local-only privacy / security audit artifacts (never publish)
 PRIVACY_AUDIT.md
 PRIVACY_AUDIT*.md
+privacy-audit*.md
 *安全审查*.md
 *隐私审计*.md
 *audit*report*.md
+*.bundle
+
+# Personal publish tooling (kept in the private workspace only)
+scripts/_sanitize_github_submit.py
+scripts/_sync_to_github_submit.py
+scripts/publish_github_submit.py
+scripts/_publish_fastpath.local.env
+
+# Extra secret / profile shapes
+credentials*
+secrets*
 
