@@ -6,17 +6,19 @@ from typing import Any
 
 from app.correction.models import CorrectionIssue, CorrectionPatch
 from app.correction.prompt import build_batch_messages
+from app.deepseek_api.config import DEFAULT_MODEL
+from app.deepseek_api.profiles import CORRECTION_REVIEW
 
 TEXT_MODELS = {
-    "fast": "deepseek-v4-flash",
-    "strict": "deepseek-v4-pro",
+    "fast": DEFAULT_MODEL,
+    "strict": DEFAULT_MODEL,
 }
 
 
 def review_issues(
     issues: list[CorrectionIssue],
     *,
-    model_name: str = "deepseek-v4-flash",
+    model_name: str = DEFAULT_MODEL,
     batch_size: int = 20,
 ) -> dict[str, Any]:
     if not issues:
@@ -49,7 +51,9 @@ def review_issues(
         if cached is not None:
             data = cached
         else:
-            data = client.chat_json(messages, model=model_name, max_tokens=4096)
+            data = client.chat_json(
+                messages, model=model_name, max_tokens=4096, profile=CORRECTION_REVIEW
+            )
             cache_set(
                 fragment=fragment,
                 issue_type="batch_review",

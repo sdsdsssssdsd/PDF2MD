@@ -16,10 +16,4 @@ These files are **documentation only** (no runtime dependency). Do not commit us
 
 ## Regenerating promos
 
-Replace PNGs under `docs/images/` locally, then publish:
-
-```bash
-python scripts/publish_github_submit.py "docs: update images"
-```
-
-`docs/images/` is mirrored into `github-submit` on sync.
+Replace the PNGs under `docs/images/` and commit. They ship with the repository; nothing in the app loads them at runtime.

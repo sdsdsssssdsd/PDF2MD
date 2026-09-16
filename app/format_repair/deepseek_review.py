@@ -3,30 +3,34 @@ from __future__ import annotations
 
 from typing import Any
 
+from app.deepseek_api.config import DEFAULT_MODEL
+from app.deepseek_api.profiles import CORRECTION_REVIEW
 from app.format_repair.prompts import build_review_messages
 
 MODELS = {
-    "fast": "deepseek-v4-flash",
-    "strict": "deepseek-v4-pro",
+    "fast": DEFAULT_MODEL,
+    "strict": DEFAULT_MODEL,
 }
 
 
 def review_format_issues(
     issues: list[dict],
     *,
-    model_name: str = "deepseek-v4-flash",
+    model_name: str = DEFAULT_MODEL,
 ) -> dict[str, Any]:
     from app.deepseek_api.client import DeepSeekClient
 
     client = DeepSeekClient()
     messages = build_review_messages(issues)
-    return client.chat_json(messages, model=model_name, max_tokens=4096)
+    return client.chat_json(
+        messages, model=model_name, max_tokens=4096, profile=CORRECTION_REVIEW
+    )
 
 
 def review_display_decisions(
     blocks: list[dict],
     *,
-    model_name: str = "deepseek-v4-flash",
+    model_name: str = DEFAULT_MODEL,
 ) -> dict[str, Any]:
     from app.deepseek_api.client import DeepSeekClient
 
@@ -47,4 +51,5 @@ def review_display_decisions(
         ],
         model=model_name,
         max_tokens=4096,
+        profile=CORRECTION_REVIEW,
     )

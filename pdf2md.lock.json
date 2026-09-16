@@ -1,0 +1,72 @@
+{
+  "schema_version": "1.0",
+  "format": "pdf2md.lock.json",
+  "created_at": "2026-09-16T15:26:19.263687+00:00",
+  "python": "3.11.9",
+  "requires_python": ">=3.10",
+  "dependencies": [
+    {
+      "requirement": "PySide6>=6.6",
+      "name": "PySide6",
+      "version": "6.11.1"
+    }
+  ],
+  "extras": {
+    "gui": [
+      {
+        "requirement": "PySide6>=6.6",
+        "name": "PySide6",
+        "version": "6.11.1"
+      }
+    ],
+    "docling": [
+      {
+        "requirement": "docling",
+        "name": "docling",
+        "version": ""
+      }
+    ],
+    "mineru": [],
+    "web": [
+      {
+        "requirement": "playwright>=1.40",
+        "name": "playwright",
+        "version": "1.62.0"
+      }
+    ],
+    "deepseek-ocr": [],
+    "paddle": [],
+    "bench": [
+      {
+        "requirement": "pytest>=7.0",
+        "name": "pytest",
+        "version": "9.1.0"
+      }
+    ],
+    "dev": [
+      {
+        "requirement": "pytest>=7.0",
+        "name": "pytest",
+        "version": "9.1.0"
+      },
+      {
+        "requirement": "ruff",
+        "name": "ruff",
+        "version": "0.16.7"
+      }
+    ]
+  },
+  "isolation": {
+    "gui": "pdf2md[gui]",
+    "cpu_providers": [
+      "pdf2md[docling]",
+      "pdf2md[web]"
+    ],
+    "cuda_runtimes": [
+      "pdf2md[deepseek-ocr]",
+      "pdf2md[paddle]",
+      "pdf2md[mineru]"
+    ],
+    "note": "CUDA runtimes stay out of the GUI extra"
+  }
+}

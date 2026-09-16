@@ -104,11 +104,9 @@ class CorrectionPipeline:
         uncertain = 0
         if cfg.mode in {"auto", "strict"} and unresolved:
             if api_key_configured():
-                model = (
-                    TEXT_MODELS["strict"]
-                    if cfg.mode == "strict"
-                    else cfg.text_model or TEXT_MODELS["fast"]
-                )
+                model = cfg.text_model or TEXT_MODELS["fast"]
+                if cfg.mode == "strict":
+                    cfg.vision_verify = True
                 emit(f"Correction：DeepSeek 审校 {len(unresolved)} 处（{model}）")
                 try:
                     review = review_issues(

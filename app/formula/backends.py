@@ -4,7 +4,10 @@ from __future__ import annotations
 
 # 生产默认仍是 legacy DeepSeek；k5_specialist 仅 shadow / 显式配置后启用
 BACKEND_MODE_LEGACY_DEEPSEEK = "legacy_deepseek"
-BACKEND_MODE_K5_SPECIALIST = "k5_specialist"
+BACKEND_MODE_SPECIALIST = "specialist"
+BACKEND_MODE_K5_SPECIALIST = "k5_specialist"  # 兼容旧名；语义名是 specialist
+
+SPECIALIST_MODES = frozenset({BACKEND_MODE_SPECIALIST, BACKEND_MODE_K5_SPECIALIST})
 
 SPECIALIST_PP_M = "pp_formulanet_plus_m"
 SPECIALIST_PP_L = "pp_formulanet_plus_l"
@@ -50,10 +53,13 @@ def is_paddle_vl(backend: str) -> bool:
     return (backend or "").strip().lower().replace(" ", "_") in PADDLE_VL_ALIASES
 
 
+def is_specialist_backend(backend_mode: str) -> bool:
+    return (backend_mode or "").strip().lower() in SPECIALIST_MODES
+
+
 def uses_deepseek_pending(backend_mode: str, vlm_fallback_backend: str) -> bool:
     """VLM 槽是否仍走现有 DeepSeek %dsid: pending（legacy 或显式 deepseek）。"""
-    mode = (backend_mode or BACKEND_MODE_LEGACY_DEEPSEEK).strip().lower()
-    if mode != BACKEND_MODE_K5_SPECIALIST:
+    if not is_specialist_backend(backend_mode):
         return True
     vlm = (vlm_fallback_backend or "").strip().lower().replace("-", "_")
     return vlm.startswith("deepseek")

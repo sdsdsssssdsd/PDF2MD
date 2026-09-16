@@ -1,7 +1,13 @@
 """浏览器 Adapter 包。"""
 from __future__ import annotations
 
-from app.vision_transcribe.browser.base import AdapterResult, NeedsUserError, ServerBusyCooldownError, server_busy_from_response
+from app.vision_transcribe.browser.base import (
+    AdapterResult,
+    NeedsUserError,
+    ServerBusyCooldownError,
+    VisionWebAdapter,
+    server_busy_from_response,
+)
 from app.vision_transcribe.browser.manual_clipboard import ManualClipboardAdapter
 
 __all__ = [

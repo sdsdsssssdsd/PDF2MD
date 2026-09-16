@@ -30,6 +30,9 @@ class VisionManifest:
     backend: str = ""
     provider: str = ""
     model: str = ""
+    model_family: str = ""
+    task_profile: str = ""
+    thinking: str = ""
     transport: str = ""
     detail: str = ""
 
@@ -179,6 +182,14 @@ class VisionManifest:
                 b["output_tokens"] = stats.get("output_tokens")
                 b["latency_ms"] = stats.get("latency_ms")
                 b["retry_count"] = max(0, attempt_n - 1)
+                b["model"] = str(stats.get("model") or "")
+                b["model_family"] = str(stats.get("model_family") or "")
+                b["task_profile"] = str(stats.get("task_profile") or "")
+                b["thinking"] = str(stats.get("thinking") or "")
+                b["transport"] = str(stats.get("transport") or "")
+                b["semantic_retry_count"] = stats.get("semantic_retry_count")
+                b["transport_retry_count"] = stats.get("transport_retry_count")
+                b["finish_reason"] = str(stats.get("finish_reason") or "")
             break
         self.version = max(int(self.version), MANIFEST_VERSION)
 

@@ -25,7 +25,7 @@ from app.utils.paths import K5_CROPS_DIR
 
 try:
     from app.utils.paths import K5_TIGHT_CROPS_DIR
-except ImportError:  # github-submit 可能尚未同步该常量
+except ImportError:  # older checkouts may not export this constant
     K5_TIGHT_CROPS_DIR = K5_CROPS_DIR / "tight"
 
 # 紧裁后的小 padding。显著小于生产 CROP_PAD_X/Y（0.10 / 0.12）。

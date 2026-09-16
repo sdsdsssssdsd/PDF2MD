@@ -1,0 +1,53 @@
+{
+  "schema_version": "1.0",
+  "cases": [
+    {
+      "id": "academic.paper_sample",
+      "suite": "academic",
+      "tags": ["dense_formula", "equation_number", "inline_math"],
+      "gold_dir": "paper_sample",
+      "fixture": "academic/paper_sample.md",
+      "page_count": 4
+    },
+    {
+      "id": "scan.low_text",
+      "suite": "scan",
+      "tags": ["scan"],
+      "gold_dir": "scan/low_text",
+      "fixture": "scan/low_text.md",
+      "page_count": 2
+    },
+    {
+      "id": "table.grid",
+      "suite": "table",
+      "tags": ["complex_table"],
+      "gold_dir": "table/grid",
+      "fixture": "table/grid.md",
+      "page_count": 1
+    },
+    {
+      "id": "multilingual.zh_en",
+      "suite": "multilingual",
+      "tags": [],
+      "gold_dir": "multilingual/zh_en",
+      "fixture": "multilingual/zh_en.md",
+      "page_count": 1
+    },
+    {
+      "id": "pathological.empty",
+      "suite": "pathological",
+      "tags": [],
+      "gold_dir": "pathological/empty",
+      "fixture": "pathological/empty.md",
+      "expect_status": "FAILED"
+    },
+    {
+      "id": "regression.eq_tag",
+      "suite": "regression",
+      "tags": ["equation_number", "figure_caption"],
+      "gold_dir": "regression/eq_tag",
+      "fixture": "regression/eq_tag.md",
+      "page_count": 1
+    }
+  ]
+}

@@ -59,6 +59,7 @@ class PlaywrightSessionClient(VisionWebAdapter):
         self._reader: threading.Thread | None = None
         self._capture_output_dir: Path | None = None
         self._capture_batch_id: int | None = None
+        self._runtime_pid: int | None = None
 
     def set_capture_context(self, output_dir: Path, batch_id: int) -> None:
         self._capture_output_dir = Path(output_dir)
@@ -106,6 +107,7 @@ class PlaywrightSessionClient(VisionWebAdapter):
             bufsize=1,
             creationflags=creationflags,
         )
+        self._register_runtime()
         self._reader = threading.Thread(
             target=self._stdout_reader_loop, daemon=True, name="pw-stdout"
         )
@@ -261,6 +263,7 @@ class PlaywrightSessionClient(VisionWebAdapter):
         proc = self._proc
         self._proc = None
         if proc is None:
+            self._unregister_runtime()
             return
         try:
             if proc.poll() is None and proc.stdin:
@@ -272,6 +275,40 @@ class PlaywrightSessionClient(VisionWebAdapter):
         try:
             if proc.poll() is None:
                 proc.kill()
+        except Exception:
+            pass
+        self._unregister_runtime()
+
+    def _register_runtime(self) -> None:
+        proc = self._proc
+        if proc is None or not proc.pid:
+            return
+        try:
+            from app.core.runtime import ResourceKind, current_job_id, get_runtime
+
+            pid = int(proc.pid)
+            self._runtime_pid = pid
+            get_runtime().register_process(
+                pid,
+                kind=ResourceKind.BROWSER,
+                job_id=current_job_id(),
+                owner="vision.deepseek_web",
+                survive_shutdown=False,
+                allow_kill=True,
+                stop_fn=self.close,
+            )
+        except Exception:
+            self._runtime_pid = None
+
+    def _unregister_runtime(self) -> None:
+        pid = self._runtime_pid
+        self._runtime_pid = None
+        if pid is None:
+            return
+        try:
+            from app.core.runtime import get_runtime
+
+            get_runtime().unregister_process(pid)
         except Exception:
             pass
 

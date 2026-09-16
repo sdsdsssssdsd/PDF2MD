@@ -1,15 +1,17 @@
 """高风险 patch 的源图 Vision 核验（Phase D）。"""
 from __future__ import annotations
 
-import json
-import re
-import tempfile
 from pathlib import Path
 from typing import Any, Literal
+import re
+import tempfile
 
 VisionChoice = Literal["before", "after", "uncertain"]
 
-VISION_MODEL_DEFAULT = "deepseek-v4-flash-vision-exp"
+from app.deepseek_api.config import DEFAULT_MODEL
+from app.deepseek_api.profiles import VISION_VERIFY
+
+VISION_MODEL_DEFAULT = DEFAULT_MODEL
 
 _VERIFY_PROMPT = """你是学术 PDF 公式 OCR 核验器。
 根据图片中的局部公式/符号，判断下列两个候选哪一个更贴近原图。
@@ -109,33 +111,31 @@ def verify_patch(
     right_context: str = "",
     model: str | None = None,
 ) -> dict[str, Any]:
-    from app.vision_api.client import DeepSeekVisionClient
+    from app.deepseek_api.client import DeepSeekClient
 
-    client = DeepSeekVisionClient()
-    vision_model = model or VISION_MODEL_DEFAULT
+    client = DeepSeekClient()
+    vision_model = model or client.config.model or VISION_MODEL_DEFAULT
     context = f"{left_context[-200:]}\n...\n{right_context[:200]}"
     prompt = _VERIFY_PROMPT.format(
         candidate_before=before,
         candidate_after=after,
         context=context,
     )
-    old_model = client.config.model
     try:
-        client.config.model = vision_model
-        result = client.transcribe([Path(image_path)], prompt)
-        text = (result.markdown or "").strip()
-    finally:
-        client.config.model = old_model
+        parsed = client.vision_json(
+            [Path(image_path)],
+            prompt,
+            profile=VISION_VERIFY,
+            prefer_files=False,
+        )
+    except Exception as exc:
+        return {
+            "choice": "uncertain",
+            "confidence": 0.0,
+            "reason": str(exc),
+            "model": vision_model,
+        }
 
-    if not text:
-        return {"choice": "uncertain", "confidence": 0.0, "reason": "empty_response"}
-    blob = text
-    if "{" in text and "}" in text:
-        blob = text[text.find("{") : text.rfind("}") + 1]
-    try:
-        parsed = json.loads(blob)
-    except json.JSONDecodeError:
-        return {"choice": "uncertain", "confidence": 0.0, "reason": "invalid_json"}
     if not isinstance(parsed, dict):
         return {"choice": "uncertain", "confidence": 0.0, "reason": "invalid_shape"}
     choice = str(parsed.get("choice") or "uncertain").lower()
@@ -146,6 +146,7 @@ def verify_patch(
         "confidence": float(parsed.get("confidence") or 0),
         "reason": str(parsed.get("reason") or ""),
         "model": vision_model,
+        "task_profile": VISION_VERIFY.name,
     }
 
 

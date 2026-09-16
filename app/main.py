@@ -39,6 +39,15 @@ def main() -> int:
     app = QApplication(sys.argv)
     app.setApplicationName("PDF2MD")
     app.setOrganizationName("PDF2MD")
+    try:
+        from app.deepseek_api.config import migrate_qsettings
+        from app.dialogs.settings_dialog import settings as qsettings
+        from app.ui.app_settings import install_deepseek_settings_loader
+
+        migrate_qsettings(qsettings())
+        install_deepseek_settings_loader()
+    except Exception:
+        pass
     cfg = load_defaults()
     install_theme(app, str(cfg.get("theme", "跟随系统")))
     # Phase 5I：退出 GUI 不杀 DeepSeek daemon

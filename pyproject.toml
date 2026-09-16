@@ -5,7 +5,7 @@ build-backend = "setuptools.build_meta"
 [project]
 name = "pdf2md"
 version = "0.1.0a0"
-description = "Windows desktop GUI: academic PDF/screenshots to Markdown — five modes: daily vision, DeepSeek Vision API, Docling/MinerU, web vision, and DeepSeek full-document format repair"
+description = "Windows desktop app: academic PDF/screenshots to Markdown in five modes (daily vision, DeepSeek Vision API, Docling/MinerU with local recovery, web vision, format repair)"
 readme = "README.md"
 requires-python = ">=3.10"
 license = { text = "Apache-2.0" }
@@ -46,12 +46,20 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
+gui = ["PySide6>=6.6"]
 docling = ["docling"]
-# MinerU install varies by platform; follow upstream docs.
+# MinerU / Paddle / DeepSeek-OCR-2 installs vary; keep them out of the GUI env.
+mineru = []
+web = ["playwright>=1.40"]
+deepseek-ocr = []
+paddle = []
+bench = ["pytest>=7.0"]
 dev = ["pytest>=7.0", "ruff"]
 
 [project.scripts]
+pdf2md = "app.core.__main__:main"
 pdf2md-gui = "app.main:main"
+pdf2md-core = "app.core.__main__:main"
 
 [tool.setuptools.packages.find]
 include = ["app*"]
@@ -62,3 +70,9 @@ include = ["app*"]
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 pythonpath = ["."]
+markers = [
+    "requires_torch: needs PyTorch installed",
+    "requires_playwright: needs Playwright and a local Chromium",
+    "requires_cuda: needs an NVIDIA CUDA device",
+    "requires_external_bench: OmniDocBench / olmOCR-Bench local datasets (nightly/manual)",
+]

@@ -8,11 +8,35 @@ from pathlib import Path
 from app.daily_vision.figure_crop import crop_regions
 from app.daily_vision.models import DailyVisionResult, FigureRegion
 from app.daily_vision.prompts import DAILY_PROMPT_VERSION
+from app.deepseek_api.config import DEFAULT_MODEL, DEFAULT_MODEL_FAMILY
+from app.deepseek_api.profiles import DAILY_VISION
 
 IMAGE_MARKER_RE = re.compile(r"<!--\s*PDF2MD:IMAGE:([^>]+)\s*-->")
 
 
-def parse_daily_response(text: str) -> DailyVisionResult:
+def parse_daily_response(text: str | dict) -> DailyVisionResult:
+    if isinstance(text, dict):
+        data = text
+        raw = json.dumps(text, ensure_ascii=False)
+        if data.get("markdown") is not None:
+            regions = []
+            for r in data.get("regions") or []:
+                if not isinstance(r, dict):
+                    continue
+                regions.append(
+                    FigureRegion(
+                        marker=str(r.get("marker") or ""),
+                        source_image=int(r.get("source_image") or 1),
+                        region_type=str(r.get("type") or "figure"),
+                        bbox=[float(x) for x in (r.get("bbox") or [])[:4]],
+                    )
+                )
+            return DailyVisionResult(
+                markdown=str(data.get("markdown") or ""),
+                regions=regions,
+                raw_json=raw,
+            )
+        return DailyVisionResult()
     raw = (text or "").strip()
     if not raw:
         return DailyVisionResult()
@@ -91,10 +115,40 @@ def export_archive(
                 "version": 1,
                 "prompt_version": DAILY_PROMPT_VERSION,
                 "source_count": len(image_paths),
+                "provider": "deepseek",
+                "model": DEFAULT_MODEL,
+                "model_family": DEFAULT_MODEL_FAMILY,
+                "task_profile": DAILY_VISION.name,
+                "thinking": "disabled",
             },
             ensure_ascii=False,
             indent=2,
         ),
         encoding="utf-8",
     )
+    try:
+        from app.core.domain.document import document_from_markdown
+        from app.core.domain.quality import quality_from_markdown
+        from app.core.pipeline.checkpoint import write_run_sidecar
+
+        ir = document_from_markdown(
+            md_body, source=str(image_paths[0] if image_paths else ""), provider="daily_vision"
+        )
+        qa = quality_from_markdown(md_body)
+        write_run_sidecar(
+            out_dir,
+            workflow="日常识图",
+            profile="daily_vision",
+            markdown_path=str(md_path),
+            status="done",
+            extra={
+                "model": DEFAULT_MODEL,
+                "task_profile": DAILY_VISION.name,
+                "source_count": len(image_paths),
+            },
+            document=ir,
+            quality=qa,
+        )
+    except Exception:
+        pass
     return md_path

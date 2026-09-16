@@ -1,13 +1,11 @@
-"""日常识图异步 Worker。"""
+"""日常识图 Worker：Qt 纯桥。业务在 DailyVisionService。"""
 from __future__ import annotations
 
 from pathlib import Path
 
-from PySide6.QtCore import QThread, Signal
+from PySide6.QtCore import QMutex, QThread, Signal
 
-from app.daily_vision.exporter import export_archive
-from app.daily_vision.pipeline import DailyVisionPipeline
-from app.task_model import TaskStatus
+from app.core.service.daily_vision import DailyVisionService
 
 
 class DailyVisionWorker(QThread):
@@ -27,20 +25,28 @@ class DailyVisionWorker(QThread):
         self._paths = list(image_paths)
         self._archive = archive
         self._archive_dir = archive_dir
+        self._cancel = False
+        self._mutex = QMutex()
+
+    def request_cancel(self) -> None:
+        self._mutex.lock()
+        self._cancel = True
+        self._mutex.unlock()
 
     def run(self) -> None:
-        try:
-            pipe = DailyVisionPipeline(log=lambda m: self.log_line.emit(m))
-            result = pipe.transcribe(self._paths)
-            md = result.markdown
-            if self._archive and self._archive_dir:
-                md_path = export_archive(self._paths, result, self._archive_dir)
-                self.finished_archive.emit(str(md_path), "")
+        outcome = DailyVisionService().run(
+            self._paths,
+            archive=self._archive,
+            archive_dir=self._archive_dir,
+            log=lambda m: self.log_line.emit(m),
+        )
+        if self._archive:
+            if outcome.ok:
+                self.finished_archive.emit(outcome.archive_path, "")
             else:
-                self.finished_ok.emit(md, "")
-        except Exception as e:
-            msg = str(e)
-            if self._archive:
-                self.finished_archive.emit("", msg)
-            else:
-                self.finished_ok.emit("", msg)
+                self.finished_archive.emit("", outcome.error)
+            return
+        if outcome.ok:
+            self.finished_ok.emit(outcome.markdown, "")
+        else:
+            self.finished_ok.emit("", outcome.error)

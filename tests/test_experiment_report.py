@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import os
 from pathlib import Path
 
 from app.diagnostics.experiment_report import (
@@ -88,7 +89,7 @@ def _write_timings(
     run_id: str,
     *,
     batch_id: str = "",
-) -> None:
+) -> Path:
     path = tmp_path / f"timings_{run_id}.json"
     path.write_text(
         json.dumps(
@@ -112,12 +113,17 @@ def _write_timings(
         ),
         encoding="utf-8",
     )
+    return path
 
 
 def test_rows_for_latest_batch_by_shared_batch_id(tmp_path: Path):
-    _write_timings(tmp_path, "O-003", "old_a", batch_id="batch_old")
-    _write_timings(tmp_path, "O-018", "new_a", batch_id="batch_new")
-    _write_timings(tmp_path, "O-019", "new_b", batch_id="batch_new")
+    old = _write_timings(tmp_path, "O-003", "old_a", batch_id="batch_old")
+    new_a = _write_timings(tmp_path, "O-018", "new_a", batch_id="batch_new")
+    new_b = _write_timings(tmp_path, "O-019", "new_b", batch_id="batch_new")
+    base = old.stat().st_mtime
+    os.utime(old, (base - 20, base - 20))
+    os.utime(new_a, (base + 20, base + 20))
+    os.utime(new_b, (base + 20, base + 20))
 
     batch = collect_experiment_results([tmp_path])
     assert len(batch.rows) == 3

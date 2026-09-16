@@ -1,0 +1,8 @@
+{
+  "required_pages": [1, 2, 3, 4],
+  "max_unresolved_formulas": 0,
+  "required_equation_ids": ["(1)", "(2)", "(7)"],
+  "forbidden_markers": [
+    "formula-not-decoded"
+  ]
+}

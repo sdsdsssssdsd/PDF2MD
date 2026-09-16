@@ -13,7 +13,7 @@ class VisionConfig:
     # backend: playwright | clipboard | api（vision_backend 优先）
     vision_backend: str = ""
     browser_mode: str = "clipboard"
-    api_batch_size: int = 10
+    api_batch_size: int = 6
     api_precision: str = "standard"  # standard | precise | extreme
     deepseek_url: str = "https://chat.deepseek.com/"
     # persistent profile（相对项目根或绝对路径）
@@ -43,7 +43,7 @@ class VisionConfig:
                 return 1
             if prec == "precise":
                 return 2
-            return max(1, int(self.api_batch_size or 10))
+            return max(1, int(self.api_batch_size or 6))
         return max(1, int(self.batch_size or 10))
 
     def resolve_profile_dir(self, app_root: Path, output_dir: Path | None = None) -> Path:

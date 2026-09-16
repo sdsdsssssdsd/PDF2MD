@@ -460,7 +460,11 @@ def rows_for_latest_batch(
             by_batch.setdefault(r.batch_id, []).append(r)
         latest_id = max(
             by_batch,
-            key=lambda bid: max(x.mtime for x in by_batch[bid]),
+            key=lambda bid: (
+                max(x.mtime for x in by_batch[bid]),
+                max(x.run_id for x in by_batch[bid]),
+                bid,
+            ),
         )
         latest = by_batch[latest_id]
         return sorted(latest, key=lambda r: (r.mtime, r.document, r.run_id))

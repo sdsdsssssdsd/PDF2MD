@@ -45,7 +45,7 @@ def test_main_window_minimum_and_defaults():
 def test_api_vision_force_rerun_control():
     _app()
     w = MainWindow()
-    assert w.cmb_api_precision.itemText(0) == "标准（10 页/批）"
+    assert w.cmb_api_precision.itemText(0) == "标准（6 页/批）"
     assert w.cb_api_force_rerun.text() == "强制重跑 API 视觉转录"
     assert w.cb_vision_force_rerun.text() == "强制重跑浏览器转录"
     w.close()

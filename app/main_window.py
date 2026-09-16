@@ -70,6 +70,10 @@ from app.task_model import (
     is_vision_workflow,
     normalize_workflow,
 )
+from app.ui.conversion_controller import ConversionController, ConversionUiInputs, ConversionViewState
+from app.ui.daily_vision_controller import DailyVisionController, DailyVisionUiInputs
+from app.ui.repair_controller import RepairController, RepairUiInputs
+from app.ui.vision_controller import VisionController, VisionUiInputs, compile_vision_options
 from app.ui.icons import icon
 from app.ui.identity import formula_profile_identity, formula_profile_tone
 from app.ui.pipeline_classify import STAGE_LABELS, classify_pipeline_stage
@@ -85,11 +89,6 @@ from app.ui.widgets.workflow_picker import WorkflowPicker
 from app.utils.logger import add_listener, get_logger, remove_listener
 from app.ui.widgets.vision_status_panel import VisionStatusPanel
 from app.utils.paths import daily_archive_dir, ensure_dirs, resolve_vision_output_dir
-from app.vision_transcribe.config import VisionConfig
-from app.workers.daily_vision_worker import DailyVisionWorker
-from app.workers.format_repair_worker import FormatRepairWorker
-from app.workers.docling_worker import ConversionWorker
-from app.workers.vision_worker import VisionConversionWorker, VisionFigureRebuildWorker
 
 try:
     from pypdf import PdfReader
@@ -110,7 +109,10 @@ class MainWindow(QMainWindow):
         self.setMinimumSize(1024, 700)
 
         self._tasks: dict[str, ConvertTask] = {}
-        self._worker: ConversionWorker | VisionConversionWorker | None = None
+        self._conversion = ConversionController(self)
+        self._vision = VisionController(self)
+        self._daily = DailyVisionController(self)
+        self._repair = RepairController(self)
         self._log_dialog = LogDialog(self)
         self._bench_dialog = None
         self._experiment_dialog = None
@@ -118,12 +120,13 @@ class MainWindow(QMainWindow):
         self._total_count = 0
 
         self._vision_run_active = False
-        self._figure_rebuild_worker: VisionFigureRebuildWorker | None = None
-        self._daily_worker: DailyVisionWorker | None = None
-        self._format_repair_worker: FormatRepairWorker | None = None
         self._daily_session = None
 
         self._build_ui()
+        self._bind_conversion_controller()
+        self._bind_vision_controller()
+        self._bind_daily_controller()
+        self._bind_repair_controller()
         self._apply_settings_to_ui()
         self._kick_deepseek_background_warmup()
 
@@ -282,7 +285,7 @@ class MainWindow(QMainWindow):
         self.api_vision_card = SectionCard("API 高精度视觉")
         api_row = QHBoxLayout()
         self.cmb_api_precision = QComboBox()
-        self.cmb_api_precision.addItem("标准（10 页/批）", "standard")
+        self.cmb_api_precision.addItem("标准（6 页/批）", "standard")
         self.cmb_api_precision.addItem("精确（2 页/批）", "precise")
         self.cmb_api_precision.addItem("极致（1 页/批）", "extreme")
         api_row.addWidget(QLabel("精度"))
@@ -298,7 +301,7 @@ class MainWindow(QMainWindow):
         api_force_row.addStretch(1)
         self.api_vision_card.body.addLayout(api_force_row)
         self.lbl_api_hint = QLabel(
-            "DeepSeek Vision API · 标准默认每批 10 页 · 输出到「Pdf名_API视觉」"
+            "DeepSeek V4.1 Flash · 标准默认每批 6 页 · 输出到「Pdf名_API视觉」"
         )
         self.lbl_api_hint.setWordWrap(True)
         self.lbl_api_hint.setProperty("role", "muted")
@@ -586,6 +589,92 @@ class MainWindow(QMainWindow):
         self.btn_open_dir.clicked.connect(self._open_selected_dir)
         return bar
 
+    def _bind_conversion_controller(self) -> None:
+        c = self._conversion
+        c.view_state_changed.connect(self._render_conversion_view)
+        c.task_status.connect(self._on_task_status)
+        c.task_finished.connect(self._on_task_finished)
+        c.log_line.connect(self._on_log)
+        c.stage.connect(self._on_stage)
+        c.pipeline_stage.connect(self._on_pipeline_stage)
+        c.deepseek_state.connect(self._on_deepseek_state)
+        c.batch_finished.connect(self._on_structured_batch_done)
+
+    def _bind_vision_controller(self) -> None:
+        v = self._vision
+        v.task_status.connect(self._on_task_status)
+        v.task_finished.connect(self._on_task_finished)
+        v.log_line.connect(self._on_vision_log)
+        v.stage.connect(self._on_stage)
+        v.pipeline_stage.connect(self._on_pipeline_stage)
+        v.needs_clipboard.connect(self._on_vision_clipboard)
+        v.needs_user.connect(self._on_vision_needs_user)
+        v.needs_figures.connect(self._on_vision_figures)
+        v.rebuild_finished.connect(self._on_vision_rebuild_ok)
+        v.rebuild_failed.connect(self._on_vision_rebuild_failed)
+        v.batch_finished.connect(self._on_vision_batch_done)
+
+    def _bind_daily_controller(self) -> None:
+        d = self._daily
+        d.log_line.connect(lambda msg: get_logger().info(msg) if msg else None)
+        d.finished_ok.connect(self._on_daily_finished_ok)
+        d.finished_archive.connect(self._on_daily_finished_archive)
+
+    def _bind_repair_controller(self) -> None:
+        r = self._repair
+        r.finished_result.connect(self._on_format_repair_result)
+        r.failed.connect(self._on_format_repair_failed)
+
+    def _collect_vision_inputs(self, out_root: Path, workflow: str) -> VisionUiInputs:
+        api = is_vision_api_workflow(workflow)
+        return VisionUiInputs(
+            output_root=out_root,
+            api=api,
+            api_precision=str(self.cmb_api_precision.currentData() or "standard"),
+            browser_mode=str(self.cmb_vision_browser.currentData() or "clipboard"),
+            images_scale=self._images_scale(),
+            image_path_mode=self._image_path_mode(),
+        )
+
+    def _conversion_busy(self) -> bool:
+        if self._conversion.is_running():
+            return True
+        return self._vision.is_running()
+
+    def _collect_conversion_inputs(self, out_root: Path) -> ConversionUiInputs:
+        return ConversionUiInputs(
+            output_root=out_root,
+            per_folder=self.cb_per_folder.isChecked(),
+            ocr_mode=self._ocr_mode(),
+            keep_tables=self.cb_tables.isChecked(),
+            formulas_checked=self.cb_formulas.isChecked(),
+            formula_recovery_preset=self._formula_recovery_preset(),
+            deepseek_lp_checked=self.cb_deepseek_lp.isChecked(),
+            images_scale=self._images_scale(),
+            image_path_mode=self._image_path_mode(),
+            export_md=self.cb_md.isChecked(),
+            export_raw_md=self.cb_raw_md.isChecked(),
+            export_repair_json=self.cb_repair_json.isChecked(),
+            export_conversion_log=self.cb_conversion_log.isChecked(),
+            export_manifest=self.cb_manifest.isChecked(),
+            export_formula_qa=self.cb_formula_qa.isChecked(),
+            export_timings=self.cb_timings.isChecked(),
+        )
+
+    def _render_conversion_view(self, state: ConversionViewState) -> None:
+        self.command_bar.set_running(state.running)
+        if state.message:
+            self.stage_label.setText(state.message)
+        if state.stage:
+            self._on_pipeline_stage(state.stage)
+
+    def _on_structured_batch_done(self) -> None:
+        if self._deepseek_limited_production():
+            self._on_deepseek_state("warm")
+        else:
+            self._refresh_ds_badge()
+        self._notify_and_maybe_open()
+
     def _install_shortcuts(self) -> None:
         def add(seq: str, slot, tip: str = "") -> None:
             act = QAction(self)
@@ -625,22 +714,18 @@ class MainWindow(QMainWindow):
         self.daily_workspace.set_status(f"已保存：{path}")
 
     def _on_format_repair_requested(self, text: str, use_review: bool) -> None:
-        if self._format_repair_worker and self._format_repair_worker.isRunning():
+        del use_review
+        if self._repair.is_running():
             return
         cfg = self.format_repair_workspace._config()
         source, snapshot = self.format_repair_workspace.source_snapshot()
-        worker = FormatRepairWorker(
-            text,
-            cfg,
-            source_path=source,
-            snapshot=snapshot,
-        )
-        worker.finished_result.connect(self._on_format_repair_result)
-        worker.failed.connect(self._on_format_repair_failed)
-        self._format_repair_worker = worker
         self.format_repair_workspace.set_busy(True)
         self.format_repair_workspace.set_status("正在修正格式…")
-        worker.start()
+        if not self._repair.start(
+            RepairUiInputs(text=text, config=cfg, source_path=source, snapshot=snapshot)
+        ):
+            self.format_repair_workspace.set_busy(False)
+            self.format_repair_workspace.set_status("格式修正未能启动")
 
     def _on_format_repair_result(self, result) -> None:
         self.format_repair_workspace.set_busy(False)
@@ -1043,7 +1128,7 @@ class MainWindow(QMainWindow):
     def _on_daily_recognize(self, paths: list, archive: bool) -> None:
         from app.vision_api.key_store import api_key_configured
 
-        if self._daily_worker and self._daily_worker.isRunning():
+        if self._daily.is_running():
             return
         if not paths:
             return
@@ -1067,45 +1152,37 @@ class MainWindow(QMainWindow):
 
         self.daily_workspace.set_busy(True)
         self.daily_workspace.set_status("识别中…")
-        worker = DailyVisionWorker(
-            [Path(p) for p in paths],
-            archive=archive,
-            archive_dir=archive_dir,
-            parent=self,
+        ok = self._daily.start(
+            DailyVisionUiInputs(
+                image_paths=tuple(Path(p) for p in paths),
+                archive=archive,
+                archive_dir=archive_dir,
+            )
         )
-        self._daily_worker = worker
-
-        def _log(msg: str) -> None:
-            if msg:
-                get_logger().info(msg)
-
-        worker.log_line.connect(_log)
-
-        def _ok(md: str, err: str) -> None:
+        if not ok:
             self.daily_workspace.set_busy(False)
-            if err:
-                self.daily_workspace.set_status(f"失败：{err}")
-                QMessageBox.warning(self, "日常识图", err)
-                return
-            self.daily_workspace.set_result(md)
-            self.daily_workspace.set_status("识别完成 · 可直接复制")
 
-        def _arch(md_path: str, err: str) -> None:
-            self.daily_workspace.set_busy(False)
-            if err:
-                self.daily_workspace.set_status(f"归档失败：{err}")
-                QMessageBox.warning(self, "日常识图", err)
-                return
-            try:
-                text = Path(md_path).read_text(encoding="utf-8")
-                self.daily_workspace.set_result(text)
-            except Exception:
-                pass
-            self.daily_workspace.set_status(f"已归档：{md_path}")
+    def _on_daily_finished_ok(self, md: str, err: str) -> None:
+        self.daily_workspace.set_busy(False)
+        if err:
+            self.daily_workspace.set_status(f"失败：{err}")
+            QMessageBox.warning(self, "日常识图", err)
+            return
+        self.daily_workspace.set_result(md)
+        self.daily_workspace.set_status("识别完成 · 可直接复制")
 
-        worker.finished_ok.connect(_ok)
-        worker.finished_archive.connect(_arch)
-        worker.start()
+    def _on_daily_finished_archive(self, md_path: str, err: str) -> None:
+        self.daily_workspace.set_busy(False)
+        if err:
+            self.daily_workspace.set_status(f"归档失败：{err}")
+            QMessageBox.warning(self, "日常识图", err)
+            return
+        try:
+            text = Path(md_path).read_text(encoding="utf-8")
+            self.daily_workspace.set_result(text)
+        except Exception:
+            pass
+        self.daily_workspace.set_status(f"已归档：{md_path}")
 
     def _on_drop(self, paths: list[str]) -> None:
         if not paths:
@@ -1355,7 +1432,7 @@ class MainWindow(QMainWindow):
         return self._tasks.get(item.data(Qt.ItemDataRole.UserRole))
 
     def _start(self) -> None:
-        if self._worker and self._worker.isRunning():
+        if self._conversion_busy():
             return
         waiting = [
             t
@@ -1438,30 +1515,19 @@ class MainWindow(QMainWindow):
                     )
                     self.command_bar.set_running(False)
                     return
-                prec = str(self.cmb_api_precision.currentData() or "standard")
-                cfg = VisionConfig(
-                    vision_backend="api",
-                    api_precision=prec,
-                    images_scale=self._images_scale(),
-                    image_path_mode=self._image_path_mode(),
-                )
+            inputs = self._collect_vision_inputs(out_root, wf)
+            cfg = compile_vision_options(inputs).to_config()
+            if is_vision_api_workflow(wf):
+                prec = inputs.api_precision
                 status_panel = self.api_vision_status
                 start_msg = (
                     f"开始 API 视觉 · 精度={prec} · "
                     f"每批 {cfg.effective_batch_size()} 页 · 共 {len(waiting)} 篇"
                 )
             else:
-                mode = self.cmb_vision_browser.currentData() or "clipboard"
-                cfg = VisionConfig(
-                    browser_mode=str(mode),
-                    vision_backend=str(mode),
-                    headless=False,
-                    images_scale=self._images_scale(),
-                    image_path_mode=self._image_path_mode(),
-                )
+                mode = inputs.browser_mode
                 status_panel = self.vision_status
                 start_msg = f"开始网页高保真 · 浏览器={mode} · 共 {len(waiting)} 篇"
-            per_folder = True
             if not self.cb_per_folder.isChecked():
                 self._on_vision_log("[vision] 视觉模式输出到独立子文件夹（与快速模式隔离）")
             self._vision_run_active = True
@@ -1469,56 +1535,16 @@ class MainWindow(QMainWindow):
             self.api_vision_status.clear()
             status_panel.set_active(True)
             status_panel.append_line(start_msg)
-            self._worker = VisionConversionWorker(
-                waiting,
-                output_root=out_root,
-                per_folder=per_folder,
-                config=cfg,
-            )
-            self._worker.task_status.connect(self._on_task_status)
-            self._worker.task_finished.connect(self._on_task_finished)
-            self._worker.log_line.connect(self._on_vision_log)
-            self._worker.stage.connect(self._on_stage)
-            self._worker.pipeline_stage.connect(self._on_pipeline_stage)
-            self._worker.needs_clipboard.connect(self._on_vision_clipboard)
-            self._worker.needs_user.connect(self._on_vision_needs_user)
-            self._worker.needs_figures.connect(self._on_vision_figures)
-            self._worker.finished.connect(self._on_worker_done)
-            self._worker.start()
+            if not self._vision.start(waiting, inputs):
+                self._vision_run_active = False
+                self.command_bar.set_running(False)
             return
 
         self.command_bar.pipeline.set_mode("structured")
         self.command_bar.pipeline.set_stage("parse")
-
-        # V1：串行（默认 1），GPU 友好
-        self._worker = ConversionWorker(
-            waiting,
-            output_root=out_root,
-            per_folder=self.cb_per_folder.isChecked(),
-            ocr_mode=self._ocr_mode(),
-            keep_images=True,  # 图片为必要组件
-            keep_tables=self.cb_tables.isChecked(),
-            keep_formulas=self._effective_keep_formulas(),
-            formula_recovery_preset=self._formula_recovery_preset(),
-            deepseek_limited_production=self._deepseek_limited_production(),
-            images_scale=self._images_scale(),
-            image_path_mode=self._image_path_mode(),
-            export_md=self.cb_md.isChecked(),
-            export_raw_md=self.cb_raw_md.isChecked(),
-            export_repair_json=self.cb_repair_json.isChecked(),
-            export_conversion_log=self.cb_conversion_log.isChecked(),
-            export_manifest=self.cb_manifest.isChecked(),
-            export_formula_qa=self.cb_formula_qa.isChecked(),
-            export_timings=self.cb_timings.isChecked(),
-        )
-        self._worker.task_status.connect(self._on_task_status)
-        self._worker.task_finished.connect(self._on_task_finished)
-        self._worker.log_line.connect(self._on_log)
-        self._worker.stage.connect(self._on_stage)
-        self._worker.pipeline_stage.connect(self._on_pipeline_stage)
-        self._worker.deepseek_state.connect(self._on_deepseek_state)
-        self._worker.finished.connect(self._on_worker_done)
-        self._worker.start()
+        if not self._conversion.start(waiting, self._collect_conversion_inputs(out_root)):
+            self.command_bar.set_running(False)
+            return
 
     def _on_vision_clipboard(
         self,
@@ -1533,11 +1559,9 @@ class MainWindow(QMainWindow):
         )
         if dlg.exec():
             text = dlg.result_text()
-            if isinstance(self._worker, VisionConversionWorker):
-                self._worker.submit_clipboard(text)
+            self._vision.submit_clipboard(text)
         else:
-            if isinstance(self._worker, VisionConversionWorker):
-                self._worker.request_cancel()
+            self._vision.cancel()
 
     def _on_vision_needs_user(self, task_id: str, message: str) -> None:
         box = QMessageBox(self)
@@ -1550,25 +1574,34 @@ class MainWindow(QMainWindow):
         cont = box.addButton("继续", QMessageBox.ButtonRole.AcceptRole)
         box.addButton("取消任务", QMessageBox.ButtonRole.RejectRole)
         box.exec()
-        if box.clickedButton() is cont and isinstance(self._worker, VisionConversionWorker):
-            self._worker.resume_after_user()
-        elif isinstance(self._worker, VisionConversionWorker):
-            self._worker.request_cancel()
+        if box.clickedButton() is cont and self._vision.is_running():
+            self._vision.resume_after_user()
+        elif self._vision.is_running():
+            self._vision.cancel()
 
     def _on_vision_figures(self, task_id: str, output_dir: str) -> None:
         dlg = VisionFigureDialog(Path(output_dir), self)
         dlg.exec()
-        if isinstance(self._worker, VisionConversionWorker):
-            self._worker.resume_after_user()
+        if self._vision.is_running():
+            self._vision.resume_after_user()
 
     def _open_vision_deepseek_ui(self) -> None:
         VisionDeepSeekUiDialog(self).exec()
 
     def _cancel(self) -> None:
-        if self._worker and self._worker.isRunning():
-            self._worker.request_cancel()
+        if self._conversion.is_running():
+            self._conversion.cancel()
+            return
+        if self._vision.is_running():
+            self._vision.cancel()
             self.stage_label.setText("正在取消…")
             self._update_pipeline_from_stage("正在取消")
+            return
+        if self._daily.is_running():
+            self._daily.cancel()
+            return
+        if self._repair.is_running():
+            self._repair.cancel()
 
     def _on_task_status(self, task_id: str, status: str, message: str) -> None:
         task = self._tasks.get(task_id)
@@ -1623,7 +1656,7 @@ class MainWindow(QMainWindow):
         if row >= 0:
             self._refresh_row(row, task)
 
-    def _on_worker_done(self) -> None:
+    def _on_vision_batch_done(self) -> None:
         if self._vision_run_active:
             self._vision_run_active = False
             self.vision_status.append_line("高保真任务队列结束")
@@ -1635,6 +1668,9 @@ class MainWindow(QMainWindow):
             self._on_deepseek_state("warm")
         else:
             self._refresh_ds_badge()
+        self._notify_and_maybe_open()
+
+    def _notify_and_maybe_open(self) -> None:
         cfg = load_defaults()
         if cfg.get("notify"):
             try:
@@ -1647,7 +1683,6 @@ class MainWindow(QMainWindow):
             except Exception:
                 pass
             try:
-                # Windows toast via powershell（失败无害）
                 os.system(
                     'powershell -NoProfile -Command '
                     '"[Windows.UI.Notifications.ToastNotificationManager, Windows.UI.Notifications, ContentType = WindowsRuntime] > $null" 2>nul'
@@ -1660,7 +1695,7 @@ class MainWindow(QMainWindow):
                 QDesktopServices.openUrl(QUrl.fromLocalFile(str(done[-1].output_dir)))
 
     def _clear(self) -> None:
-        if self._worker and self._worker.isRunning():
+        if self._conversion_busy():
             QMessageBox.warning(self, "提示", "转换进行中，无法清空。")
             return
         self._tasks.clear()
@@ -1778,54 +1813,38 @@ class MainWindow(QMainWindow):
             self._rebuild_vision_figures(t)
 
     def _rebuild_vision_figures(self, task: ConvertTask) -> None:
-        if self._figure_rebuild_worker and self._figure_rebuild_worker.isRunning():
+        if self._vision.is_running():
             QMessageBox.information(self, "提示", "正在重合并与裁图，请稍候…")
             return
         if not task.output_dir or not task.pdf_path.is_file():
             QMessageBox.warning(self, "提示", "缺少 PDF 或输出目录。")
             return
-        cfg = VisionConfig(
-            browser_mode=str(self.cmb_vision_browser.currentData() or "playwright"),
-            images_scale=self._images_scale(),
-            image_path_mode=self._image_path_mode(),
-        )
+        wf = getattr(task, "workflow", "") or self._current_workflow()
+        inputs = self._collect_vision_inputs(task.output_dir, wf)
         self._vision_run_active = True
         self.vision_status.set_active(True)
         self.vision_status.append_line("仅重合并与裁图（不重跑浏览器）…")
-        worker = VisionFigureRebuildWorker(
-            task.id,
-            task.pdf_path,
-            task.output_dir,
-            config=cfg,
-            parent=self,
-        )
-        self._figure_rebuild_worker = worker
-
-        def _log(msg: str) -> None:
-            if msg:
-                self.vision_status.append_line(msg)
-
-        worker.log_line.connect(_log)
-
-        def _ok(tid: str, final_md: str) -> None:
+        if not self._vision.start_rebuild(task.id, task.pdf_path, task.output_dir, inputs):
             self._vision_run_active = False
-            self.vision_status.append_line(f"裁图完成: {final_md}")
+            QMessageBox.information(self, "提示", "正在重合并与裁图，请稍候…")
+
+    def _on_vision_rebuild_ok(self, tid: str, final_md: str) -> None:
+        self._vision_run_active = False
+        self.vision_status.append_line(f"裁图完成: {final_md}")
+        task = self._tasks.get(tid)
+        if task is not None:
             task.output_md = Path(final_md)
             self._load_task_vision_fidelity(task)
             row = self._row_of(tid)
             if row >= 0:
                 self._refresh_row(row, task)
-            QMessageBox.information(self, "完成", f"已更新 Markdown 与 images/\n{final_md}")
+        QMessageBox.information(self, "完成", f"已更新 Markdown 与 images/\n{final_md}")
 
-        def _fail(tid: str, err: str) -> None:
-            self._vision_run_active = False
-            self.vision_status.append_line(f"裁图失败: {err}")
-            QMessageBox.warning(self, "裁图失败", err)
-
-        worker.finished_ok.connect(_ok)
-        worker.failed.connect(_fail)
-        worker.finished.connect(lambda: setattr(self, "_figure_rebuild_worker", None))
-        worker.start()
+    def _on_vision_rebuild_failed(self, tid: str, err: str) -> None:
+        del tid
+        self._vision_run_active = False
+        self.vision_status.append_line(f"裁图失败: {err}")
+        QMessageBox.warning(self, "裁图失败", err)
 
     def _pick_output(self) -> None:
         start = self.output_edit.text().strip() or str(Path.home())
@@ -1920,9 +1939,16 @@ class MainWindow(QMainWindow):
 
     def closeEvent(self, event) -> None:  # noqa: N802
         remove_listener(self._on_log)
-        if self._worker and self._worker.isRunning():
-            self._worker.request_cancel()
-            self._worker.wait(3000)
+        self._conversion.shutdown(3000)
+        self._vision.shutdown(3000)
+        self._daily.shutdown(3000)
+        self._repair.shutdown(3000)
+        try:
+            from app.core.runtime import get_runtime
+
+            get_runtime().shutdown(keep_daemons=True)
+        except Exception:
+            pass
         # 持久化当前界面选项
         s = settings()
         s.setValue("engine", self._current_engine() if self._current_engine() != "自动" else "自动")

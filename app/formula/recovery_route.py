@@ -7,7 +7,7 @@ from __future__ import annotations
 
 from enum import Enum
 
-from app.formula.backends import BACKEND_MODE_K5_SPECIALIST
+from app.formula.backends import is_specialist_backend
 from app.formula.types import FormulaCandidate, FormulaQuality
 
 
@@ -70,7 +70,7 @@ def route_corrupted_formula(
     """
     vlm_ok = deepseek_available if vlm_available is None else bool(vlm_available)
 
-    if (backend_mode or "").strip().lower() == BACKEND_MODE_K5_SPECIALIST:
+    if is_specialist_backend(backend_mode):
         preset = (recovery_preset or "balanced").strip().lower()
         severe = _is_severe(cand)
         if preset == "fast":

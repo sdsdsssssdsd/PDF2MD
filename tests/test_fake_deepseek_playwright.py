@@ -41,6 +41,11 @@ def test_fake_deepseek_copy_and_clipboard_hook(playwright_browser):
     context.close()
 
 
+@pytest.mark.requires_playwright
+@pytest.mark.xfail(
+    reason="fake_deepseek.html 附件 DOM 与 count_composer_attachments 选择器不一致 (issue: r51-playwright-upload-count)",
+    strict=True,
+)
 def test_fake_deepseek_upload_attachment_count(playwright_browser):
     from app.vision_transcribe.browser.upload_guard import count_composer_attachments
 

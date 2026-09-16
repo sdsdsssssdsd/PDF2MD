@@ -11,9 +11,11 @@ Thanks for your interest in contributing.
    ```bash
    python -m compileall -q app tests
    pip install pytest
+   python scripts/check_github_submit_privacy.py
+   python -m app doctor
    pytest
    ```
-5. Run `python run_gui.py`
+5. Run `python run_gui.py` or `python -m app` (GUI). CLI: `python -m app convert --help`
 
 ## Guidelines
 

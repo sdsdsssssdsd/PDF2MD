@@ -1,36 +1,34 @@
-"""DeepSeek Vision API 错误分类。"""
-from __future__ import annotations
+"""兼容层。"""
+from app.deepseek_api.errors import (
+    AuthenticationError,
+    DeepSeekApiError,
+    EmptyContentError,
+    IntegrityViolationError,
+    InvalidJsonError,
+    ModelError,
+    NetworkError,
+    RateLimitError,
+    RequestTooLargeError,
+    ResponseValidationError,
+    UnsupportedImageError,
+    UnsupportedMediaError,
+    VisionApiError,
+    VisionModelError,
+)
 
-
-class VisionApiError(RuntimeError):
-    """API 调用基类。"""
-
-    retryable: bool = False
-
-
-class AuthenticationError(VisionApiError):
-    retryable = False
-
-
-class RateLimitError(VisionApiError):
-    retryable = True
-
-
-class RequestTooLargeError(VisionApiError):
-    retryable = True
-
-
-class UnsupportedImageError(VisionApiError):
-    retryable = False
-
-
-class VisionModelError(VisionApiError):
-    retryable = True
-
-
-class NetworkError(VisionApiError):
-    retryable = True
-
-
-class ResponseValidationError(VisionApiError):
-    retryable = True
+__all__ = [
+    "AuthenticationError",
+    "DeepSeekApiError",
+    "EmptyContentError",
+    "IntegrityViolationError",
+    "InvalidJsonError",
+    "ModelError",
+    "NetworkError",
+    "RateLimitError",
+    "RequestTooLargeError",
+    "ResponseValidationError",
+    "UnsupportedImageError",
+    "UnsupportedMediaError",
+    "VisionApiError",
+    "VisionModelError",
+]

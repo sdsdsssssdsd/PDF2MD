@@ -93,6 +93,12 @@ def _env_tone(status: str) -> str:
 class SettingsDialog(QDialog):
     def __init__(self, parent=None) -> None:
         super().__init__(parent)
+        try:
+            from app.ui.app_settings import install_deepseek_settings_loader
+
+            install_deepseek_settings_loader()
+        except Exception:
+            pass
         self.setWindowTitle("设置")
         self.resize(760, 620)
         cfg = load_defaults()
@@ -226,27 +232,33 @@ class SettingsDialog(QDialog):
         return page
 
     def _page_deepseek_api(self) -> QWidget:
-        from app.vision_api.config import (
+        from app.deepseek_api.config import (
             DEFAULT_API_BASE,
+            DEFAULT_MODEL,
             DEFAULT_TIMEOUT_S,
-            DEFAULT_VISION_MODEL,
-            VisionApiConfig,
+            DeepSeekApiConfig,
+            migrate_legacy_model_name,
         )
-        from app.vision_api.key_store import get_api_key, set_api_key
+        from app.deepseek_api.key_store import get_api_key, set_api_key
 
         page = QWidget()
         lay = QVBoxLayout(page)
         lay.setContentsMargins(0, 0, 0, 0)
         card = SectionCard(
-            "DeepSeek Vision API",
-            "用于「日常识图」与「API 高精度视觉」。Key 存 Credential Manager 或环境变量。",
+            "DeepSeek API",
+            "日常识图、API 高精度、格式修正共用 V4.1 Flash（deepseek-flash）。Key 存 Credential Manager 或环境变量。",
         )
         form = QFormLayout()
-        cfg = VisionApiConfig.from_settings()
+        cfg = DeepSeekApiConfig.from_settings()
         self.api_base = QLineEdit(cfg.api_base or DEFAULT_API_BASE)
         form.addRow("API Base URL：", self.api_base)
-        self.api_model = QLineEdit(cfg.model or DEFAULT_VISION_MODEL)
-        form.addRow("Vision Model：", self.api_model)
+        model_lbl = QLabel(f"DeepSeek V4.1 Flash（{DEFAULT_MODEL}）")
+        model_lbl.setProperty("role", "muted")
+        form.addRow("当前生产模型：", model_lbl)
+        override = cfg.model if cfg.model != DEFAULT_MODEL else ""
+        self.api_model = QLineEdit(override)
+        self.api_model.setPlaceholderText("高级覆盖，默认留空")
+        form.addRow("模型覆盖（高级）：", self.api_model)
         self.api_key = QLineEdit()
         self.api_key.setEchoMode(QLineEdit.EchoMode.Password)
         self.api_key.setPlaceholderText("留空则保留已保存的 Key")
@@ -260,15 +272,21 @@ class SettingsDialog(QDialog):
         self.api_detail.addItems(["Original", "High", "Low"])
         dmap = {"original": 0, "high": 1, "low": 2}
         self.api_detail.setCurrentIndex(dmap.get(cfg.detail, 0))
-        form.addRow("Detail：", self.api_detail)
+        form.addRow("Image Detail：", self.api_detail)
         self.api_timeout = QSpinBox()
         self.api_timeout.setRange(30, 900)
         self.api_timeout.setValue(int(cfg.timeout_s or DEFAULT_TIMEOUT_S))
-        form.addRow("Request Timeout (s)：", self.api_timeout)
-        self.api_auto_retry = QCheckBox("自动重试")
+        form.addRow("Timeout (s)：", self.api_timeout)
+        self.api_auto_retry = QCheckBox("自动重试（传输层）")
         self.api_auto_retry.setChecked(bool(cfg.auto_retry))
         form.addRow(self.api_auto_retry)
-        key_hint = QLabel("也可设置环境变量 DEEPSEEK_API_KEY。日志不会输出 Key。格式修正模式直接调用此 API。")
+        self.api_compat = QCheckBox("兼容第三方网关（允许去掉 thinking）")
+        self.api_compat.setChecked(bool(cfg.compatibility_mode))
+        form.addRow(self.api_compat)
+        key_hint = QLabel(
+            "也可设置环境变量 DEEPSEEK_API_KEY。日志不会输出 Key。"
+            "旧模型名 deepseek-v4-flash / vision-exp / pro 会自动迁到 deepseek-flash。"
+        )
         key_hint.setWordWrap(True)
         key_hint.setProperty("role", "subtle")
         form.addRow("", key_hint)
@@ -283,15 +301,16 @@ class SettingsDialog(QDialog):
         lay.addStretch(1)
         if get_api_key():
             self.api_key.setPlaceholderText("已配置（输入新 Key 可覆盖）")
+        self._migrate_legacy_model_name = migrate_legacy_model_name
         return page
 
     def _test_deepseek_api(self) -> None:
         self._save_deepseek_api_only()
         self.lbl_api_test.setText("连接中…")
         try:
-            from app.vision_api.client import DeepSeekVisionClient
+            from app.deepseek_api.client import DeepSeekClient
 
-            client = DeepSeekVisionClient()
+            client = DeepSeekClient()
             text_result = client.test_connection()
             preview = (text_result.markdown or "OK")[:24]
             self.lbl_api_test.setText(f"文本 OK · {preview} · 视觉探测中…")
@@ -304,17 +323,23 @@ class SettingsDialog(QDialog):
             self.lbl_api_test.setText(f"失败：{e}")
 
     def _save_deepseek_api_only(self) -> None:
-        from app.vision_api.key_store import set_api_key
+        from app.deepseek_api.config import DEFAULT_MODEL, migrate_legacy_model_name
+        from app.deepseek_api.key_store import set_api_key
 
         s = settings()
         s.setValue("deepseek_api_base", self.api_base.text().strip())
-        s.setValue("deepseek_vision_model", self.api_model.text().strip())
+        override = migrate_legacy_model_name(self.api_model.text().strip())
+        s.setValue("deepseek_model", override or DEFAULT_MODEL)
+        s.setValue("deepseek_vision_model", override or DEFAULT_MODEL)
         transport_rev = {0: "auto", 1: "base64", 2: "file_id"}
         detail_rev = {0: "original", 1: "high", 2: "low"}
         s.setValue("deepseek_api_transport", transport_rev.get(self.api_transport.currentIndex(), "auto"))
         s.setValue("deepseek_api_detail", detail_rev.get(self.api_detail.currentIndex(), "original"))
         s.setValue("deepseek_api_timeout", self.api_timeout.value())
         s.setValue("deepseek_api_auto_retry", self.api_auto_retry.isChecked())
+        if hasattr(self, "api_compat"):
+            s.setValue("deepseek_compatibility_mode", self.api_compat.isChecked())
+        s.setValue("deepseek_model_migrated_v41", True)
         key_text = self.api_key.text().strip()
         if key_text:
             set_api_key(key_text)

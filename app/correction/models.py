@@ -6,18 +6,21 @@ from pathlib import Path
 from typing import Any
 
 
+from app.deepseek_api.config import DEFAULT_MODEL
+
+
 @dataclass
 class CorrectionConfig:
-    """终稿审校配置。mode: off | auto | strict。"""
+    """终稿审校配置。mode: off | auto | strict。只影响门限/复核，不换模型。"""
 
     mode: str = "auto"
     normalize_math: bool = True
     compact_display_math: bool = True
-    text_model: str = "deepseek-v4-flash"
-    strict_model: str = "deepseek-v4-pro"
+    text_model: str = DEFAULT_MODEL
+    strict_model: str = DEFAULT_MODEL
     save_report: bool = True
     vision_verify: bool = True
-    vision_model: str = "deepseek-v4-flash-vision-exp"
+    vision_model: str = DEFAULT_MODEL
     batch_size: int = 20
     context_chars: int = 300
     auto_inline_threshold: int = 70
@@ -26,33 +29,28 @@ class CorrectionConfig:
     @classmethod
     def from_settings(cls, *, mode: str | None = None) -> CorrectionConfig:
         try:
+            from app.deepseek_api.config import DeepSeekApiConfig
+
+            api = DeepSeekApiConfig.from_settings()
+            model = api.model or DEFAULT_MODEL
             from app.dialogs.settings_dialog import settings
 
             s = settings()
             resolved = str(mode or s.value("correction_mode", "auto") or "auto").strip().lower()
             if resolved not in {"off", "auto", "strict"}:
                 resolved = "auto"
-            text_model = str(
-                s.value("correction_text_model", "deepseek-v4-flash") or "deepseek-v4-flash"
-            )
-            strict_model = str(
-                s.value("correction_strict_model", "deepseek-v4-pro") or "deepseek-v4-pro"
-            )
-            vision_model = str(
-                s.value("correction_vision_model", "deepseek-v4-flash-vision-exp")
-                or "deepseek-v4-flash-vision-exp"
-            )
             return cls(
                 mode=resolved,
                 normalize_math=bool(s.value("correction_normalize_math", True, type=bool)),
                 compact_display_math=bool(
                     s.value("correction_compact_display", True, type=bool)
                 ),
-                text_model=text_model,
-                strict_model=strict_model,
-                vision_model=vision_model,
+                text_model=model,
+                strict_model=model,
+                vision_model=model,
                 vision_verify=bool(s.value("correction_vision_verify", True, type=bool)),
                 save_report=bool(s.value("correction_save_report", True, type=bool)),
+                batch_size=8 if resolved == "strict" else 20,
             )
         except Exception:
             return cls(mode=str(mode or "auto"))

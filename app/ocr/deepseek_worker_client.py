@@ -320,6 +320,7 @@ class DeepSeekWorkerClient:
         else:
             kwargs["start_new_session"] = True
             self._proc = subprocess.Popen([str(py), "-u", str(server)], **kwargs)
+        self._sync_resource_runtime("spawned")
 
     def ensure_started(self, *, timeout: float = START_TIMEOUT_SECONDS) -> bool:
         with self._lock:
@@ -331,6 +332,7 @@ class DeepSeekWorkerClient:
                     WorkerLifecycleState.RESTARTING,
                 ):
                     self.lifecycle = WorkerLifecycleState.READY
+                self._sync_resource_runtime("attached")
                 return True
             if not self.allow_spawn:
                 self.last_error = "spawn_disabled"
@@ -344,6 +346,7 @@ class DeepSeekWorkerClient:
             while time.time() - t0 < timeout:
                 if self.ping():
                     self.lifecycle = WorkerLifecycleState.READY
+                    self._sync_resource_runtime("attached")
                     return True
                 time.sleep(0.2)
             self.last_error = "worker_start_timeout"
@@ -652,9 +655,48 @@ class DeepSeekWorkerClient:
         """Executor ThreadPool 兜底超时回调（与 socket timeout 同路径，可幂等）。"""
         self.handle_formula_timeout(detail="executor_thread_timeout")
 
+    def _daemon_pid(self) -> int | None:
+        if self._proc is not None and self._proc.pid:
+            return int(self._proc.pid)
+        meta = self._read_meta()
+        pid = int(meta.get("pid") or 0) if meta else 0
+        return pid or None
+
+    def _sync_resource_runtime(self, event: str) -> None:
+        """登记 daemon 生命周期。失败不影响推理算法。"""
+        try:
+            from app.core.runtime import ModelState, ResourceKind, get_runtime
+
+            runtime = get_runtime()
+            owner = "formula.deepseek_ocr2"
+            if event == "killed":
+                runtime.unregister_owner(owner)
+                runtime.models.detach(owner)
+                return
+            pid = self._daemon_pid()
+            if pid:
+                runtime.register_process(
+                    pid,
+                    kind=ResourceKind.DAEMON,
+                    owner=owner,
+                    survive_shutdown=bool(self.survive_gui_exit),
+                    allow_kill=False,
+                )
+            state = ModelState.LOADING if event == "spawned" else ModelState.READY
+            runtime.models.attach(
+                owner,
+                pid=pid,
+                state=state,
+                survive_gui_exit=bool(self.survive_gui_exit),
+                healthcheck=self.health,
+            )
+        except Exception:
+            pass
+
     def _kill_worker_process(self) -> None:
         """销毁当前 Worker（含 meta pid），不可复用卡死进程。"""
         self.session_stats.kill_count += 1
+        self._sync_resource_runtime("killed")
         # 先杀我们 spawn 的句柄
         if self._proc is not None:
             try:

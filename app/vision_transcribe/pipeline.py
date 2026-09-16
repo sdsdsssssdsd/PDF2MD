@@ -82,6 +82,9 @@ class VisionPipeline:
             m.backend = "deepseek_api"
             m.provider = "deepseek"
             m.model = api_cfg.model
+            m.model_family = "DeepSeek-V4.1-Flash"
+            m.task_profile = "pdf_vision"
+            m.thinking = "disabled"
             m.transport = api_cfg.transport
             m.detail = api_cfg.detail
         else:
@@ -872,6 +875,50 @@ class VisionPipeline:
         final_path.write_text(md, encoding="utf-8")
         m.state = PipelineState.DONE.value
         save_manifest(self.output_dir, m)
+        try:
+            from app.core.domain.document import document_from_markdown
+            from app.core.domain.quality import quality_from_markdown
+            from app.core.pipeline.checkpoint import write_run_sidecar
+            from app.core.pipeline.planner import profile_name_for_workflow
+            from app.task_model import WorkflowChoice
+
+            backend = self.config.effective_backend()
+            wf = (
+                WorkflowChoice.VISION_API.value
+                if backend == "api"
+                else WorkflowChoice.VISION_WEB.value
+            )
+            ir = document_from_markdown(
+                md, source=str(self.pdf_path), provider=str(m.backend or "vision"),
+                page_count=m.page_count,
+            )
+            qa = quality_from_markdown(md, page_count=m.page_count)
+            write_run_sidecar(
+                self.output_dir,
+                workflow=wf,
+                profile=profile_name_for_workflow(wf),
+                source=str(self.pdf_path),
+                markdown_path=str(final_path),
+                status=m.state,
+                extra={
+                    "vision_manifest": ".vision/manifest.json",
+                    "model": m.model,
+                    "task_profile": m.task_profile,
+                    "backend": m.backend,
+                },
+                document=ir,
+                quality=qa,
+            )
+            from app.core.compat.vision_manifest import ensure_vision_run_compat
+
+            ensure_vision_run_compat(
+                self.output_dir,
+                source=str(self.pdf_path),
+                markdown_path=str(final_path),
+                workflow=wf,
+            )
+        except Exception:
+            pass
         from app.diagnostics.vision_fidelity_summary import write_fidelity_stats
 
         stats = write_fidelity_stats(self.output_dir, final_md=final_path)

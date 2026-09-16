@@ -1,0 +1,110 @@
+{
+  "bomFormat": "CycloneDX",
+  "specVersion": "1.5",
+  "version": 1,
+  "metadata": {
+    "timestamp": "2026-09-16T15:26:19.271714+00:00",
+    "component": {
+      "type": "application",
+      "name": "pdf2md",
+      "version": "0.1.0a0",
+      "licenses": [
+        {
+          "license": {
+            "id": "Apache-2.0"
+          }
+        }
+      ]
+    },
+    "properties": [
+      {
+        "name": "pdf2md:lock",
+        "value": "pdf2md.lock.json"
+      },
+      {
+        "name": "pdf2md:lock_present",
+        "value": "true"
+      }
+    ]
+  },
+  "components": [
+    {
+      "type": "library",
+      "name": "PySide6",
+      "version": "6.11.1",
+      "scope": "required"
+    },
+    {
+      "type": "library",
+      "name": "PySide6",
+      "version": "6.11.1",
+      "scope": "optional",
+      "properties": [
+        {
+          "name": "pdf2md:extra",
+          "value": "gui"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "name": "docling",
+      "version": "unspecified",
+      "scope": "optional",
+      "properties": [
+        {
+          "name": "pdf2md:extra",
+          "value": "docling"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "name": "playwright",
+      "version": "1.62.0",
+      "scope": "optional",
+      "properties": [
+        {
+          "name": "pdf2md:extra",
+          "value": "web"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "name": "pytest",
+      "version": "9.1.0",
+      "scope": "optional",
+      "properties": [
+        {
+          "name": "pdf2md:extra",
+          "value": "bench"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "name": "pytest",
+      "version": "9.1.0",
+      "scope": "optional",
+      "properties": [
+        {
+          "name": "pdf2md:extra",
+          "value": "dev"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "name": "ruff",
+      "version": "0.16.7",
+      "scope": "optional",
+      "properties": [
+        {
+          "name": "pdf2md:extra",
+          "value": "dev"
+        }
+      ]
+    }
+  ]
+}

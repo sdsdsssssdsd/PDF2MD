@@ -39,7 +39,21 @@ def test_chunker_preserves_yaml_front_matter():
     assert chunks[0].count("---") >= 2
 
 
-def test_repair_text_uses_deepseek_not_local_rules():
+def test_repair_text_rolls_back_content_drift():
+    src = "公式 (19) 中 n=12。\n"
+
+    def chat(md: str, part: int, total: int) -> str:
+        return "公式 (19) 中 n=13。\n"
+
+    result = repair_text(src, chat_fn=chat)
+    assert "n=12" in result.output_text
+    assert "n=13" not in result.output_text
+    assert result.report["integrity"] == 0
+    assert not result.ok
+    assert result.warnings
+
+
+def test_repair_text_allows_math_wrap():
     src = "若 (n) 为奇数\n\n[\nF(\\lambda)\n]\n"
     fake = "若 $n$ 为奇数\n\n$$\nF(\\lambda)\n$$\n"
 
@@ -51,6 +65,33 @@ def test_repair_text_uses_deepseek_not_local_rules():
     assert "$n$" in result.output_text
     assert "$$" in result.output_text
     assert result.report["chunks"] == 1
+
+
+def test_repair_does_not_save_on_integrity_fail(tmp_path: Path):
+    source = tmp_path / "chapter.md"
+    source.write_text("公式 (19) 中 n=12。\n", encoding="utf-8")
+    text, snap = read_text_file(source)
+    out = repair_text(
+        text,
+        config=RepairConfig(),
+        source_path=source,
+        snapshot=snap,
+        chat_fn=lambda md, part, total: "公式 (19) 中 n=13。\n",
+    )
+    assert not out.ok
+    assert "saved_path" not in out.report
+    assert list(tmp_path.glob("*修复版*")) == []
+
+
+def test_protected_image_path_restored():
+    src = "见图 ![x](images/a.png) 结束\n"
+
+    def chat(md: str, part: int, total: int) -> str:
+        return md.replace("images/a.png", "images/hack.png")
+
+    result = repair_text(src, chat_fn=chat)
+    assert "images/a.png" in result.output_text
+    assert "hack.png" not in result.output_text
 
 
 def test_file_snapshot_and_sibling_output(tmp_path: Path):

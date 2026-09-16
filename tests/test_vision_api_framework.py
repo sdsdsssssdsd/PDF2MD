@@ -63,12 +63,19 @@ def test_vision_config_effective_batch_size():
     assert cfg.effective_backend() == "api"
     assert cfg.effective_batch_size() == 4
     cfg_default = VisionConfig(vision_backend="api", api_precision="standard")
-    assert cfg_default.effective_batch_size() == 10
+    assert cfg_default.effective_batch_size() == 6
     cfg2 = VisionConfig(vision_backend="api", api_precision="extreme")
     assert cfg2.effective_batch_size() == 1
 
 
-def test_parse_daily_response_json():
+def test_parse_daily_response_dict():
+    payload = {
+        "markdown": "hello",
+        "regions": [{"marker": "i0001:f01", "source_image": 1, "bbox": [0, 0, 1, 1]}],
+    }
+    result = parse_daily_response(payload)
+    assert result.markdown == "hello"
+    assert result.regions[0].marker == "i0001:f01"
     payload = {
         "markdown": "hello\n<!-- PDF2MD:IMAGE:i0001:f01 -->",
         "regions": [{"marker": "i0001:f01", "source_image": 1, "bbox": [0, 0, 1, 1]}],
@@ -83,7 +90,7 @@ def test_deepseek_adapter_delegates_to_client(tmp_path: Path):
     img.write_bytes(b"\x89PNG\r\n\x1a\n")
     adapter = DeepSeekApiVisionAdapter(config=VisionApiConfig())
     mock_result = MagicMock(markdown="# ok", request_id="r1", input_tokens=1, output_tokens=2, latency_ms=10)
-    with patch.object(adapter._client, "transcribe", return_value=mock_result):
+    with patch.object(adapter._client, "vision_text", return_value=mock_result):
         out = adapter.submit_batch([img], "prompt")
     assert out.markdown == "# ok"
     assert out.extract_stats and out.extract_stats.get("backend") == "deepseek_api"
@@ -123,12 +130,26 @@ def test_chat_completion_urls():
     assert cfg.chat_completion_urls()[1].endswith("/chat/completions")
 
 
-def test_extract_assistant_text_reasoning_fallback():
+def test_extract_assistant_text_ignores_reasoning():
     msg = {"content": "", "reasoning_content": "OK reasoning"}
-    assert extract_assistant_text(msg) == "OK reasoning"
+    assert extract_assistant_text(msg) == ""
 
 
-def test_parse_response_allow_empty_for_test():
+def test_empty_content_raises_without_reasoning_fallback():
+    from app.deepseek_api.errors import EmptyContentError
+
+    client = DeepSeekVisionClient(config=VisionApiConfig())
+    data = {
+        "id": "x",
+        "choices": [
+            {
+                "message": {"content": "", "reasoning_content": "hidden"},
+                "finish_reason": "stop",
+            }
+        ],
+    }
+    with pytest.raises(EmptyContentError):
+        client._parse_response(data)
     client = DeepSeekVisionClient(config=VisionApiConfig())
     data = {
         "id": "x",

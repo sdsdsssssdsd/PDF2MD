@@ -14,10 +14,6 @@
 
 仅用于文档展示，**不参与程序运行**。请勿在此目录提交用户 PDF 或转换产物。
 
-## 更新图片后发布
+## 更新图片
 
-```bash
-python scripts/publish_github_submit.py "docs: 更新图片"
-```
-
-同步脚本会把 `docs/images/` 镜像到 `github-submit`。
+替换 `docs/images/` 下的 PNG 后提交即可。程序运行时不会读取这些文件。

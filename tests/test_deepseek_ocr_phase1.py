@@ -4,6 +4,8 @@ from __future__ import annotations
 
 from pathlib import Path
 
+import pytest
+
 from app.ocr.cache import PageOCRCache, RegionOCRCache, file_sha1
 from app.ocr.extractor import FormulaFromDocumentOCRExtractor
 from app.ocr import OCRMode, DocumentOCRResult
@@ -61,6 +63,7 @@ def test_page_cache_reuses_same_page():
     assert cache.stats.misses == 1
 
 
+@pytest.mark.requires_torch
 def test_deepseek_unavailable_without_cuda_when_cpu_disallowed(monkeypatch):
     DeepSeekOCR2Recognizer.reset_class_model()
 

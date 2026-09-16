@@ -49,6 +49,18 @@ def integrity_ok(before: str, after: str) -> bool:
     return content_projection(before) == content_projection(after)
 
 
+_PAREN_IDENT = re.compile(r"\(([A-Za-z][A-Za-z0-9]*)\)")
+
+
+def format_integrity_ok(before: str, after: str) -> bool:
+    """格式修正门：允许把 (n) 收成 $n$ 这类围栏变化，不允许改数字/正文。"""
+    if integrity_ok(before, after):
+        return True
+    a = _PAREN_IDENT.sub(r"\1", content_projection(before))
+    b = _PAREN_IDENT.sub(r"\1", content_projection(after))
+    return a == b
+
+
 def projection_diff(before: str, after: str) -> str:
     a = content_projection(before)
     b = content_projection(after)

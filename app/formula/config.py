@@ -79,6 +79,8 @@ def normalize_preset(name: str | None) -> str:
 
 @dataclass
 class FormulaConfig:
+    """扁平字段保持兼容。分组视图见 `groups()` / `app.formula.config_groups`。"""
+
     enabled: bool = True
 
     detection_enabled: bool = True
@@ -129,12 +131,12 @@ class FormulaConfig:
     vlm_fallback_enabled: bool = False
     preprocess_variants: bool = False
 
-    # k5：语义 backend（生产默认 legacy_deepseek，禁止未做 A/B 就切主力）
-    formula_backend_mode: str = "legacy_deepseek"  # legacy_deepseek | k5_specialist
+    # 公式 backend：legacy_deepseek | specialist（k5_specialist 为旧名）
+    formula_backend_mode: str = "legacy_deepseek"
     specialist_primary: str = "pp_formulanet_plus_m"
     specialist_quality: str = "pp_formulanet_plus_l"
     vlm_fallback_backend: str = "paddleocr_vl_1_6"
-    k5_shadow_only: bool = True
+    k5_shadow_only: bool = True  # 语义名 specialist_shadow_only
     k5_require_consensus: bool = True
 
     # DeepSeek-OCR 2：实验开关（默认关闭，不进生产 Markdown）
@@ -188,6 +190,14 @@ class FormulaConfig:
 
     extra: dict = field(default_factory=dict)
 
+    @property
+    def specialist_shadow_only(self) -> bool:
+        return self.k5_shadow_only
+
+    @property
+    def specialist_require_consensus(self) -> bool:
+        return self.k5_require_consensus
+
     def __post_init__(self) -> None:
         self.recovery_preset = normalize_preset(self.recovery_preset)
         if not isinstance(self.budget, RecoveryBudget):
@@ -209,6 +219,11 @@ class FormulaConfig:
             self.crop_render_scale = spec["crop_render_scale"]
             self.preprocess_variants = spec["preprocess_variants"]
             self.max_attempts = max(1, b.max_ocr_calls_per_formula)
+
+    def groups(self):
+        from app.formula.config_groups import groups_from_formula_config
+
+        return groups_from_formula_config(self)
 
 
 def formula_config_for_preset(name: str | None = None, **overrides: Any) -> FormulaConfig:

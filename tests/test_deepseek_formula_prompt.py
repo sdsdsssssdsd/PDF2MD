@@ -1,11 +1,14 @@
 # -*- coding: utf-8 -*-
 from unittest.mock import MagicMock
 
+import pytest
+
 from app.ocr import PROMPT_FORMULA_LATEX
 from app.ocr.deepseek_ocr2 import DeepSeekOCR2Recognizer
 from app.ocr.deepseek_profiles import DeepSeekOCRProfile
 
 
+@pytest.mark.requires_torch
 def test_formula_mode_honors_explicit_prompt():
     rec = DeepSeekOCR2Recognizer(
         formula_profile=DeepSeekOCRProfile(
