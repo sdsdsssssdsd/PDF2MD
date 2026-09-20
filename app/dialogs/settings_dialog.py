@@ -28,7 +28,14 @@ from PySide6.QtWidgets import (
 
 from app.ui.widgets.section_card import SectionCard
 from app.ui.widgets.status_badge import StatusBadge
-from app.utils.paths import OUTPUT_DIR
+from app.utils.paths import (
+    DEFAULT_SAVE_MODE,
+    MD_SIBLING_SUFFIX,
+    OUTPUT_DIR,
+    SAVE_MODE_LABELS,
+    SAVE_MODES,
+    normalize_save_mode,
+)
 from app.workers.env_worker import EnvProbeWorker
 
 
@@ -52,6 +59,9 @@ def load_defaults() -> dict:
     return {
         "engine": s.value("engine", "Docling"),
         "output_dir": s.value("output_dir", str(OUTPUT_DIR)),
+        "save_mode": normalize_save_mode(
+            s.value("save_mode", DEFAULT_SAVE_MODE) or DEFAULT_SAVE_MODE
+        ),
         "per_folder": s.value("per_folder", True, type=bool),
         "ocr_mode": s.value("ocr_mode", "auto"),
         "parallel": int(s.value("parallel", 1)),
@@ -350,6 +360,18 @@ class SettingsDialog(QDialog):
         lay.setContentsMargins(0, 0, 0, 0)
         card = SectionCard("输出", "默认导出位置。")
         form = QFormLayout()
+        self.save_mode = QComboBox()
+        for mode in SAVE_MODES:
+            self.save_mode.addItem(SAVE_MODE_LABELS.get(mode, mode), mode)
+        idx = self.save_mode.findData(normalize_save_mode(cfg.get("save_mode")))
+        self.save_mode.setCurrentIndex(idx if idx >= 0 else 0)
+        self.save_mode.setToolTip(
+            "PDF 所在文件夹：在原 PDF 旁建「PDF名"
+            + MD_SIBLING_SUFFIX
+            + "」独立文件夹（默认，推荐）。\n"
+            "后两项沿用导出根目录；只读目录或无写权限时会自动回退到导出根目录。"
+        )
+        form.addRow("保存位置：", self.save_mode)
         out_row = QHBoxLayout()
         self.output = QLineEdit(str(cfg["output_dir"]))
         browse = QPushButton("选择...")
@@ -359,11 +381,22 @@ class SettingsDialog(QDialog):
         form.addRow("默认导出目录：", out_row)
         self.per_folder = QCheckBox("每篇论文建立独立文件夹")
         self.per_folder.setChecked(bool(cfg["per_folder"]))
+        self.per_folder.setToolTip("仅在保存位置为「导出目录」时生效。")
         form.addRow(self.per_folder)
         card.body.addLayout(form)
         lay.addWidget(card)
         lay.addStretch(1)
+        self.save_mode.currentIndexChanged.connect(self._sync_output_enabled)
+        self._sync_output_enabled()
         return page
+
+    def _sync_output_enabled(self) -> None:
+        """PDF 旁模式不依赖导出根目录，只在回退时使用。"""
+        mode = normalize_save_mode(self.save_mode.currentData())
+        self.output.setEnabled(mode != "pdf_sibling")
+        self.per_folder.setEnabled(mode != "pdf_sibling")
+        # 子文件夹开关是「保存位置」的镜像，避免两个设置互相矛盾
+        self.per_folder.setChecked(mode != "root_flat")
 
     def _page_look(self, cfg: dict) -> QWidget:
         page = QWidget()
@@ -450,6 +483,7 @@ class SettingsDialog(QDialog):
         s = settings()
         s.setValue("engine", self.engine.currentText())
         s.setValue("output_dir", self.output.text().strip())
+        s.setValue("save_mode", normalize_save_mode(self.save_mode.currentData()))
         s.setValue("per_folder", self.per_folder.isChecked())
         s.setValue("ocr_mode", ocr_rev.get(self.ocr.currentText(), "auto"))
         scale_map = {0: 1.0, 1: 2.0, 2: 3.0}

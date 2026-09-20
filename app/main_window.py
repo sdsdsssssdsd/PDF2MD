@@ -88,7 +88,18 @@ from app.ui.widgets.format_repair_workspace import FormatRepairWorkspace
 from app.ui.widgets.workflow_picker import WorkflowPicker
 from app.utils.logger import add_listener, get_logger, remove_listener
 from app.ui.widgets.vision_status_panel import VisionStatusPanel
-from app.utils.paths import daily_archive_dir, ensure_dirs, resolve_vision_output_dir
+from app.utils.paths import (
+    DEFAULT_SAVE_MODE,
+    MD_SIBLING_SUFFIX,
+    SAVE_MODE_LABELS,
+    SAVE_MODES,
+    daily_archive_dir,
+    ensure_dirs,
+    normalize_save_mode,
+    resolve_vision_output_dir,
+    sibling_archive_dir,
+    sibling_archive_dir_writable,
+)
 
 try:
     from pypdf import PdfReader
@@ -545,8 +556,23 @@ class MainWindow(QMainWindow):
         self.mode_settings_stack.addWidget(format_page)
 
         out_card = SectionCard("输出")
+        self.cmb_save_mode = QComboBox()
+        for mode in SAVE_MODES:
+            self.cmb_save_mode.addItem(SAVE_MODE_LABELS.get(mode, mode), mode)
+        idx_save = self.cmb_save_mode.findData(DEFAULT_SAVE_MODE)
+        self.cmb_save_mode.setCurrentIndex(idx_save if idx_save >= 0 else 0)
+        self.cmb_save_mode.setToolTip(
+            "PDF 所在文件夹（默认）：在原 PDF 旁建「PDF名"
+            + MD_SIBLING_SUFFIX
+            + "」独立文件夹，转换结果与原文放在一起。\n"
+            "只读目录/无写权限时自动回退到导出目录下的同名子文件夹。"
+        )
+        save_row = QHBoxLayout()
+        save_row.addWidget(QLabel("保存位置"))
+        save_row.addWidget(self.cmb_save_mode, 1)
+        out_card.body.addLayout(save_row)
         self.output_edit = QLineEdit()
-        self.output_edit.setPlaceholderText("导出目录")
+        self.output_edit.setPlaceholderText("导出目录（回退位置）")
         self.output_edit.editingFinished.connect(self._persist_output_dir)
         out_dir_row = QHBoxLayout()
         out_dir_row.addWidget(self.output_edit, 1)
@@ -557,9 +583,17 @@ class MainWindow(QMainWindow):
         out_dir_row.addWidget(btn_out)
         out_dir_row.addWidget(btn_open_out)
         out_card.body.addLayout(out_dir_row)
+        self._btn_pick_output = btn_out
         self.cb_per_folder = QCheckBox("每篇独立文件夹")
         self.cb_per_folder.setChecked(True)
         out_card.body.addWidget(self.cb_per_folder)
+        self.lbl_save_hint = QLabel("")
+        self.lbl_save_hint.setWordWrap(True)
+        self.lbl_save_hint.setProperty("role", "muted")
+        out_card.body.addWidget(self.lbl_save_hint)
+        self.cmb_save_mode.currentIndexChanged.connect(self._sync_save_mode_ui)
+        self.cmb_save_mode.currentIndexChanged.connect(lambda _i: self._persist_save_mode())
+        self._sync_save_mode_ui()
 
         pl.addWidget(self.mode_settings_stack)
         pl.addWidget(out_card)
@@ -634,6 +668,7 @@ class MainWindow(QMainWindow):
             browser_mode=str(self.cmb_vision_browser.currentData() or "clipboard"),
             images_scale=self._images_scale(),
             image_path_mode=self._image_path_mode(),
+            save_mode=self._save_mode(),
         )
 
     def _conversion_busy(self) -> bool:
@@ -645,6 +680,7 @@ class MainWindow(QMainWindow):
         return ConversionUiInputs(
             output_root=out_root,
             per_folder=self.cb_per_folder.isChecked(),
+            save_mode=self._save_mode(),
             ocr_mode=self._ocr_mode(),
             keep_tables=self.cb_tables.isChecked(),
             formulas_checked=self.cb_formulas.isChecked(),
@@ -991,7 +1027,12 @@ class MainWindow(QMainWindow):
         was_ds = self._deepseek_limited_production()
         cfg = load_defaults()
         self.output_edit.setText(str(cfg["output_dir"]))
-        self.cb_per_folder.setChecked(bool(cfg["per_folder"]))
+        mode_idx = self.cmb_save_mode.findData(
+            normalize_save_mode(cfg.get("save_mode", DEFAULT_SAVE_MODE))
+        )
+        self.cmb_save_mode.setCurrentIndex(mode_idx if mode_idx >= 0 else 0)
+        # per_folder 由保存位置派生，见 _sync_save_mode_ui
+        self._sync_save_mode_ui()
         eng = str(cfg["engine"])
         if eng == "MinerU":
             self.rb_mineru.setChecked(True)
@@ -1292,10 +1333,11 @@ class MainWindow(QMainWindow):
 
     def _open_task_dir(self, task_id: str) -> None:
         t = self._tasks.get(task_id)
-        if not t or not t.output_dir:
+        target = self._task_output_dir_hint(t) if t else None
+        if target is None:
             QMessageBox.information(self, "提示", "请选择已有输出目录的任务。")
             return
-        QDesktopServices.openUrl(QUrl.fromLocalFile(str(t.output_dir)))
+        QDesktopServices.openUrl(QUrl.fromLocalFile(str(target)))
 
     def _show_task_error(self, task_id: str) -> None:
         t = self._tasks.get(task_id)
@@ -1449,10 +1491,18 @@ class MainWindow(QMainWindow):
             return
 
         out_text = self.output_edit.text().strip()
+        sibling_mode = self._save_mode_sibling()
         if not out_text:
-            QMessageBox.warning(self, "导出目录", "请先指定导出目录。")
-            self.output_edit.setFocus()
-            return
+            if sibling_mode:
+                # PDF 旁存档：导出目录仅作回退位置，缺省用应用 output/
+                from app.utils.paths import OUTPUT_DIR
+
+                out_text = str(OUTPUT_DIR)
+                self.output_edit.setText(out_text)
+            else:
+                QMessageBox.warning(self, "导出目录", "请先指定导出目录。")
+                self.output_edit.setFocus()
+                return
         out_root = Path(out_text)
         try:
             out_root.mkdir(parents=True, exist_ok=True)
@@ -1463,6 +1513,18 @@ class MainWindow(QMainWindow):
             QMessageBox.warning(self, "导出目录", f"路径不是有效目录：\n{out_root}")
             return
         self._persist_output_dir()
+
+        if sibling_mode:
+            blocked = [
+                t.name
+                for t in waiting
+                if not sibling_archive_dir_writable(t.pdf_path)
+            ]
+            if blocked:
+                self._on_log(
+                    "[输出] 以下 PDF 所在文件夹不可写，将回退到导出目录："
+                    + "、".join(blocked[:5])
+                )
 
         # 更新工作流 / 引擎到任务
         eng = self._current_engine()
@@ -1486,7 +1548,9 @@ class MainWindow(QMainWindow):
                 t.status = TaskStatus.WAITING.value
                 t.error = ""
                 if is_vision_workflow(wf):
-                    vis_out = resolve_vision_output_dir(out_root, t.pdf_path, wf)
+                    vis_out = resolve_vision_output_dir(
+                        out_root, t.pdf_path, wf, save_mode=self._save_mode()
+                    )
                     t.vision_force_rerun = should_force_vision_rerun(
                         vis_out,
                         checkbox=self._vision_force_rerun_checked(wf),
@@ -1528,7 +1592,7 @@ class MainWindow(QMainWindow):
                 mode = inputs.browser_mode
                 status_panel = self.vision_status
                 start_msg = f"开始网页高保真 · 浏览器={mode} · 共 {len(waiting)} 篇"
-            if not self.cb_per_folder.isChecked():
+            if not self._save_mode_sibling() and not self.cb_per_folder.isChecked():
                 self._on_vision_log("[vision] 视觉模式输出到独立子文件夹（与快速模式隔离）")
             self._vision_run_active = True
             self.vision_status.clear()
@@ -1703,6 +1767,22 @@ class MainWindow(QMainWindow):
         self.drop.set_compact(False)
         self._refresh_empty_state()
 
+    def _task_output_dir_hint(self, task: ConvertTask) -> Path | None:
+        """任务输出目录提示：已有 output_dir 优先，否则按当前保存位置预判。"""
+        if task.output_dir:
+            return Path(task.output_dir)
+        wf = getattr(task, "workflow", "") or self._current_workflow()
+        if is_vision_workflow(wf):
+            return resolve_vision_output_dir(
+                Path(self.output_edit.text().strip() or "."),
+                task.pdf_path,
+                wf,
+                save_mode=self._save_mode(),
+            )
+        if self._save_mode_sibling():
+            return sibling_archive_dir(task.pdf_path)
+        return None
+
     def _open_selected_md(self) -> None:
         t = self._selected_task()
         if not t or not t.output_md or not t.output_md.exists():
@@ -1712,10 +1792,11 @@ class MainWindow(QMainWindow):
 
     def _open_selected_dir(self) -> None:
         t = self._selected_task()
-        if not t or not t.output_dir:
+        target = self._task_output_dir_hint(t) if t else None
+        if target is None:
             QMessageBox.information(self, "提示", "请选择已有输出目录的任务。")
             return
-        QDesktopServices.openUrl(QUrl.fromLocalFile(str(t.output_dir)))
+        QDesktopServices.openUrl(QUrl.fromLocalFile(str(target)))
 
     def _on_cell_clicked(self, row: int, col: int) -> None:
         if col != 8:
@@ -1779,11 +1860,15 @@ class MainWindow(QMainWindow):
             t.status = TaskStatus.WAITING.value
             t.error = ""
             if is_vision_workflow(getattr(t, "workflow", "")):
-                from app.utils.paths import vision_task_output_dir
                 from app.vision_transcribe.manifest import should_force_vision_rerun
 
                 out_root = Path(self.output_edit.text().strip() or ".")
-                vis_out = t.output_dir or vision_task_output_dir(out_root, t.pdf_path)
+                vis_out = t.output_dir or resolve_vision_output_dir(
+                    out_root,
+                    t.pdf_path,
+                    getattr(t, "workflow", "") or self._current_workflow(),
+                    save_mode=self._save_mode(),
+                )
                 t.vision_force_rerun = should_force_vision_rerun(
                     vis_out,
                     checkbox=self._vision_force_rerun_checked(
@@ -1863,11 +1948,43 @@ class MainWindow(QMainWindow):
         if path:
             settings().setValue("output_dir", path)
 
+    def _save_mode(self) -> str:
+        return normalize_save_mode(self.cmb_save_mode.currentData())
+
+    def _save_mode_sibling(self) -> bool:
+        return self._save_mode() == "pdf_sibling"
+
+    def _sync_save_mode_ui(self) -> None:
+        """PDF 旁存档为默认；导出目录只在回退/集中导出时使用。"""
+        mode = self._save_mode()
+        sibling = mode == "pdf_sibling"
+        for w in (self.output_edit, self._btn_pick_output, self.cb_per_folder):
+            w.setEnabled(not sibling)
+        if sibling:
+            self.lbl_save_hint.setText(
+                f"每篇在 PDF 旁生成「PDF名{MD_SIBLING_SUFFIX}」独立文件夹；"
+                "目标不可写时回退到导出目录。"
+            )
+        else:
+            self.lbl_save_hint.setText("结果写入下方导出目录。")
+        # 子文件夹开关是「保存位置」的镜像，避免两个控件互相矛盾
+        self.cb_per_folder.setChecked(mode != "root_flat")
+
+    def _persist_save_mode(self) -> None:
+        settings().setValue("save_mode", self._save_mode())
+
     def _open_output_root(self) -> None:
         path = self.output_edit.text().strip()
         if not path:
-            QMessageBox.information(self, "提示", "请先指定导出目录。")
-            return
+            if self._save_mode_sibling():
+                # PDF 旁模式：导出目录只作回退，缺省用应用 output/
+                from app.utils.paths import OUTPUT_DIR
+
+                path = str(OUTPUT_DIR)
+                self.output_edit.setText(path)
+            else:
+                QMessageBox.information(self, "提示", "请先指定导出目录。")
+                return
         root = Path(path)
         try:
             root.mkdir(parents=True, exist_ok=True)
@@ -1955,6 +2072,7 @@ class MainWindow(QMainWindow):
         if self.rb_auto.isChecked():
             s.setValue("engine", "自动")
         s.setValue("output_dir", self.output_edit.text().strip())
+        s.setValue("save_mode", self._save_mode())
         s.setValue("per_folder", self.cb_per_folder.isChecked())
         s.setValue("ocr_mode", self._ocr_mode())
         s.setValue("keep_images", True)

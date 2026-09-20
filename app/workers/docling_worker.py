@@ -10,7 +10,7 @@ from app.core.service.conversion import ConversionOptions, ConversionService, fo
 from app.task_model import ConvertTask, TaskStatus
 from app.ui.pipeline_classify import classify_deepseek_state, classify_pipeline_stage
 from app.utils.logger import get_logger, new_run_id, write_task_log
-from app.utils.paths import task_output_dir
+from app.utils.paths import DEFAULT_SAVE_MODE, task_output_dir
 
 
 class ConversionWorker(QThread):
@@ -29,6 +29,7 @@ class ConversionWorker(QThread):
         output_root: Path,
         per_folder: bool,
         ocr_mode: str,
+        save_mode: str = DEFAULT_SAVE_MODE,
         keep_images: bool = True,
         keep_tables: bool = True,
         keep_formulas: bool = True,
@@ -50,6 +51,7 @@ class ConversionWorker(QThread):
         self._options_snapshot = ConversionOptions(
             output_root=output_root,
             per_folder=per_folder,
+            save_mode=save_mode,
             ocr_mode=ocr_mode,
             keep_images=keep_images,
             keep_tables=keep_tables,
@@ -120,7 +122,12 @@ class ConversionWorker(QThread):
             self.log_line.emit(f"开始转换 {task.name}（引擎 {task.engine}）")
             log.info("开始转换 %s 引擎=%s", task.name, task.engine)
 
-            out_dir = task_output_dir(snapshot.output_root, task.pdf_path, snapshot.per_folder)
+            out_dir = task_output_dir(
+                snapshot.output_root,
+                task.pdf_path,
+                snapshot.per_folder,
+                save_mode=snapshot.save_mode,
+            )
             out_dir.mkdir(parents=True, exist_ok=True)
             t0 = time.time()
             run_id = new_run_id()

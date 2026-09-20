@@ -8,7 +8,7 @@ from typing import Any, Callable
 
 from app.core.domain.job import CancellationToken
 from app.task_model import ConvertTask, TaskStatus, WorkflowChoice, normalize_workflow
-from app.utils.paths import resolve_vision_output_dir
+from app.utils.paths import DEFAULT_SAVE_MODE, normalize_save_mode, resolve_vision_output_dir
 from app.vision_transcribe.config import VisionConfig
 from app.vision_transcribe.manifest import vision_dir
 from app.vision_transcribe.models import BatchStatus
@@ -41,6 +41,7 @@ class VisionHooks:
 class VisionOptions:
     output_root: Path
     per_folder: bool = True
+    save_mode: str = DEFAULT_SAVE_MODE
     api: bool = False
     api_precision: str = "standard"
     browser_mode: str = "clipboard"
@@ -68,6 +69,7 @@ class VisionOptions:
         return {
             "output_root": self.output_root,
             "per_folder": bool(self.per_folder),
+            "save_mode": normalize_save_mode(self.save_mode),
             "config": self.to_config(),
         }
 
@@ -79,10 +81,13 @@ class VisionService:
         output_root: Path,
         per_folder: bool = True,
         hooks: VisionHooks | None = None,
+        *,
+        save_mode: str = DEFAULT_SAVE_MODE,
     ) -> None:
         self._config = config
         self._output_root = Path(output_root)
         self._per_folder = bool(per_folder)
+        self._save_mode = normalize_save_mode(save_mode)
         self._hooks = hooks or VisionHooks()
         self._cancel = CancellationToken()
         self._current_pipeline: VisionPipeline | None = None
@@ -153,7 +158,9 @@ class VisionService:
     def run_task(self, task: ConvertTask) -> Path:
         wf = normalize_workflow(task.workflow or WorkflowChoice.VISION_WEB.value)
         task.workflow = wf
-        out = resolve_vision_output_dir(self._output_root, task.pdf_path, wf)
+        out = resolve_vision_output_dir(
+            self._output_root, task.pdf_path, wf, save_mode=self._save_mode
+        )
         task.output_dir = out
         tid = task.id
         self._hooks.on_status(tid, TaskStatus.RUNNING.value, "页面渲染")

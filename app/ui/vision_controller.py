@@ -9,6 +9,7 @@ from PySide6.QtCore import QObject, Signal
 
 from app.core.service.vision import VisionOptions
 from app.task_model import ConvertTask
+from app.utils.paths import DEFAULT_SAVE_MODE, normalize_save_mode
 from app.workers.vision_worker import VisionConversionWorker, VisionFigureRebuildWorker
 
 WorkerFactory = Callable[..., Any]
@@ -22,6 +23,7 @@ class VisionUiInputs:
     browser_mode: str = "clipboard"
     images_scale: float = 2.0
     image_path_mode: str = "relative"
+    save_mode: str = DEFAULT_SAVE_MODE
 
 
 @dataclass(frozen=True)
@@ -39,6 +41,7 @@ def compile_vision_options(inputs: VisionUiInputs) -> VisionOptions:
     return VisionOptions(
         output_root=Path(inputs.output_root),
         per_folder=True,
+        save_mode=normalize_save_mode(inputs.save_mode),
         api=bool(inputs.api),
         api_precision=str(inputs.api_precision or "standard"),
         browser_mode=str(inputs.browser_mode or "clipboard"),

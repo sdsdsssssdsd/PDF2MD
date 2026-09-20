@@ -10,6 +10,7 @@ from PySide6.QtCore import QObject, Signal
 from app.core.domain.quality import QualityVerdict
 from app.core.service.conversion import ConversionOptions
 from app.task_model import ConvertTask
+from app.utils.paths import DEFAULT_SAVE_MODE, normalize_save_mode
 from app.workers.docling_worker import ConversionWorker
 
 WorkerFactory = Callable[..., Any]
@@ -21,6 +22,7 @@ class ConversionUiInputs:
 
     output_root: Path
     per_folder: bool = True
+    save_mode: str = DEFAULT_SAVE_MODE
     ocr_mode: str = "auto"
     keep_tables: bool = True
     formulas_checked: bool = True
@@ -55,6 +57,7 @@ def compile_options(inputs: ConversionUiInputs) -> ConversionOptions:
     return ConversionOptions(
         output_root=Path(inputs.output_root),
         per_folder=bool(inputs.per_folder),
+        save_mode=normalize_save_mode(inputs.save_mode),
         ocr_mode=str(inputs.ocr_mode or "auto"),
         keep_tables=bool(inputs.keep_tables),
         keep_formulas=keep_formulas,

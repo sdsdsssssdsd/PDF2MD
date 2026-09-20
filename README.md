@@ -44,8 +44,10 @@ Structured workflow (PDF excerpt → Markdown).
 | | **日常识图** | **API 高精度** | **快速自动** | **网页高保真** | **格式修正** |
 |---|---|---|---|---|---|
 | **Best for** | Slides, notes, phone shots | Official API, no browser | Batch papers, local GPU | Hard layouts, no API quota | Broken `$` / `$$` / `---` |
-| **Output** | Preview or `日常识图/` | `output/<stem>_API视觉/` | `output/<stem>/` | `output/<stem>_高保真/` | Sibling `*_修复版.md` |
+| **Output (default)** | Preview or `日常识图/` | `<pdf>_API视觉/` next to the PDF | `<pdf>_MD/` next to the PDF | `<pdf>_高保真/` next to the PDF | Sibling `*_修复版.md` |
 | **Typical time** | Seconds–minutes | Minutes | Seconds–minutes | Minutes–hours | Seconds–minutes |
+
+Default **save location** is a folder beside the source PDF (`paper.pdf` → `paper_MD/`). The main window can switch to an export root (one subfolder per paper, or flat). If the PDF folder is not writable, the app falls back to the export root.
 
 The main window keeps frequent options only (export images + Markdown; tables + references). Diagnostics sit behind **…**.
 
@@ -149,7 +151,8 @@ Web vision is an **experimental browser provider** with a site contract. If Deep
 python -m app doctor          # Python / GPU / providers / disk / licenses
 python -m app providers       # installed / available / enabled / healthy
 python -m app inspect paper.pdf --json
-python -m app convert paper.pdf --json          # plan only
+python -m app convert paper.pdf --json          # plan only (default save: pdf_sibling)
+python -m app convert paper.pdf --save-mode root_folder --json
 python -m app convert paper.pdf --execute       # runs ConversionService
 python -m app benchmark --help
 python -m app smoke

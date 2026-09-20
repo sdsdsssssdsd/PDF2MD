@@ -44,8 +44,10 @@ English: [README.md](README.md)
 | | **日常识图** | **API 高精度** | **快速自动** | **网页高保真** | **格式修正** |
 |---|---|---|---|---|---|
 | **适用** | 笔记、幻灯、手机图 | 官方 API、不跑浏览器 | 批量论文、本地 GPU | 版式难、没有 API 额度 | `$` / `$$` / `---` 坏掉 |
-| **输出** | 预览或 `日常识图/` | `<名>_API视觉/` | `<名>/` | `<名>_高保真/` | 旁路 `*_修复版.md` |
+| **默认输出** | 预览或 `日常识图/` | PDF 旁 `<名>_API视觉/` | PDF 旁 `<名>_MD/` | PDF 旁 `<名>_高保真/` | 旁路 `*_修复版.md` |
 | **耗时** | 秒～分钟 | 分钟级 | 秒～分钟 | 分钟～小时 | 秒～分钟 |
+
+默认**保存位置**是原 PDF 旁边的独立文件夹（`paper.pdf` → `paper_MD/`）。主窗口可改成导出根目录（每篇一个子文件夹，或平铺）。PDF 所在目录不可写时，自动退回导出根目录。
 
 主窗口只留高频选项（导出图片 + Markdown；识别表格 + 参考文献）。诊断项放在 **…** 里。
 
@@ -149,7 +151,8 @@ PDF
 python -m app doctor          # Python / GPU / Provider / 磁盘 / 许可
 python -m app providers
 python -m app inspect paper.pdf --json
-python -m app convert paper.pdf --json          # 只出计划
+python -m app convert paper.pdf --json          # 只出计划（默认 pdf_sibling）
+python -m app convert paper.pdf --save-mode root_folder --json
 python -m app convert paper.pdf --execute       # 真正转换
 python -m app benchmark --help
 python -m app smoke

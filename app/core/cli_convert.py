@@ -5,11 +5,19 @@ import argparse
 import json
 from pathlib import Path
 
+from app.utils.paths import DEFAULT_SAVE_MODE, SAVE_MODES, normalize_save_mode
+
 
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(prog="pdf2md convert")
     parser.add_argument("source", type=Path)
     parser.add_argument("--out", type=Path, default=None)
+    parser.add_argument(
+        "--save-mode",
+        default=DEFAULT_SAVE_MODE,
+        choices=list(SAVE_MODES),
+        help="pdf_sibling=PDF 旁「PDF名_MD」（默认）；root_folder / root_flat=导出根目录",
+    )
     parser.add_argument("--workflow", default="快速自动")
     parser.add_argument("--engine", default="自动")
     parser.add_argument("--plan-only", action="store_true", help="只输出 profile/plan")
@@ -19,6 +27,7 @@ def main(argv: list[str] | None = None) -> int:
 
     source = Path(args.source)
     out_dir = Path(args.out) if args.out else source.parent
+    save_mode = normalize_save_mode(args.save_mode)
     from app.core.domain.job import ConversionRequest
     from app.core.pipeline.planner import plan_for_request
     from app.core.routing.profiler import profile_source
@@ -31,20 +40,31 @@ def main(argv: list[str] | None = None) -> int:
         engine=args.engine,
     )
     plan = plan_for_request(request, profile=profile)
-    payload = {"profile": profile.to_dict(), "plan": plan.to_dict(), "executed": False}
+    payload = {
+        "profile": profile.to_dict(),
+        "plan": plan.to_dict(),
+        "executed": False,
+        "save_mode": save_mode,
+    }
     if args.execute:
         from app.core.service.conversion import ConversionOptions, ConversionService
         from app.task_model import ConvertTask, EngineChoice
 
         engine = args.engine if args.engine != "自动" else EngineChoice.AUTO.value
         task = ConvertTask(pdf_path=source, engine=engine, workflow=args.workflow)
-        service = ConversionService(ConversionOptions(output_root=out_dir, per_folder=True))
+        service = ConversionService(
+            ConversionOptions(output_root=out_dir, per_folder=True, save_mode=save_mode)
+        )
         result = service.run_task(task)
         payload["executed"] = True
         payload["ok"] = result.ok
         payload["error"] = result.error
+        payload["output_dir"] = str(result.output_dir or "")
     if args.json:
         print(json.dumps(payload, ensure_ascii=False, indent=2))
     else:
-        print(f"parser={plan.parser} stages={','.join(plan.stages)} executed={payload['executed']}")
+        print(
+            f"parser={plan.parser} stages={','.join(plan.stages)} "
+            f"executed={payload['executed']} save_mode={save_mode}"
+        )
     return 0

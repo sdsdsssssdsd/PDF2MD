@@ -23,7 +23,7 @@ from app.engines.base import ConversionResult
 from app.repair import RepairConfig, RepairPipeline
 from app.task_model import ConvertTask
 from app.utils.logger import new_run_id, write_task_log
-from app.utils.paths import experiment_doc_dir, task_output_dir
+from app.utils.paths import DEFAULT_SAVE_MODE, experiment_doc_dir, normalize_save_mode, task_output_dir
 
 ProgressFn = Callable[[str], None]
 
@@ -32,6 +32,7 @@ ProgressFn = Callable[[str], None]
 class ConversionOptions:
     output_root: Path
     per_folder: bool = True
+    save_mode: str = DEFAULT_SAVE_MODE
     ocr_mode: str = "auto"
     keep_images: bool = True
     keep_tables: bool = True
@@ -52,6 +53,7 @@ class ConversionOptions:
 
     def __post_init__(self) -> None:
         object.__setattr__(self, "keep_images", True)
+        object.__setattr__(self, "save_mode", normalize_save_mode(self.save_mode))
         mode = self.image_path_mode if self.image_path_mode in ("relative", "absolute") else "relative"
         object.__setattr__(self, "image_path_mode", mode)
         object.__setattr__(self, "docling_formula_enrich", bool(self.keep_formulas))
@@ -66,10 +68,17 @@ class ConversionOptions:
             return True
         return self.docling_formula_enrich
 
+    def to_dict(self) -> dict[str, Any]:
+        """冻结选项的可序列化快照（进入 ConversionRequest.extra / 诊断报告）。"""
+        data = asdict(self)
+        data["output_root"] = str(self.output_root)
+        return data
+
     def worker_kwargs(self) -> dict[str, Any]:
         return {
             "output_root": self.output_root,
             "per_folder": self.per_folder,
+            "save_mode": self.save_mode,
             "ocr_mode": self.ocr_mode,
             "keep_images": True,
             "keep_tables": self.keep_tables,
@@ -137,7 +146,12 @@ class ConversionService:
         run_id: str = "",
     ) -> JobResult:
         emit = progress or (lambda _m: None)
-        out_dir = task_output_dir(self.options.output_root, task.pdf_path, self.options.per_folder)
+        out_dir = task_output_dir(
+            self.options.output_root,
+            task.pdf_path,
+            self.options.per_folder,
+            save_mode=self.options.save_mode,
+        )
         out_dir.mkdir(parents=True, exist_ok=True)
         request = ConversionRequest(
             source_path=task.pdf_path,

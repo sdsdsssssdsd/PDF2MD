@@ -9,6 +9,7 @@ from PySide6.QtCore import QMutex, QThread, Signal, QWaitCondition
 from app.core.service.vision import VisionHooks, VisionService
 from app.task_model import ConvertTask, TaskStatus
 from app.utils.logger import get_logger
+from app.utils.paths import DEFAULT_SAVE_MODE
 from app.vision_transcribe.config import VisionConfig
 
 
@@ -29,12 +30,14 @@ class VisionConversionWorker(QThread):
         output_root: Path,
         per_folder: bool,
         config: VisionConfig | None = None,
+        save_mode: str = DEFAULT_SAVE_MODE,
         parent=None,
     ) -> None:
         super().__init__(parent)
         self._tasks = list(tasks)
         self._output_root = Path(output_root)
         self._per_folder = per_folder
+        self._save_mode = save_mode
         self._config = config or VisionConfig()
         self._cancel = False
         self._mutex = QMutex()
@@ -118,6 +121,7 @@ class VisionConversionWorker(QThread):
             self._output_root,
             self._per_folder,
             hooks=self._make_hooks(),
+            save_mode=self._save_mode,
         )
         self._service = service
         if self._cancelled():
