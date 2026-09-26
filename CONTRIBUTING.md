@@ -2,6 +2,8 @@
 
 Thanks for your interest in contributing.
 
+Current collaborators: [sdsdsssssdsd](https://github.com/sdsdsssssdsd), [yangxingchen123](https://github.com/yangxingchen123).
+
 ## Development setup
 
 1. Fork and clone the repository

@@ -242,6 +242,13 @@ CI：Windows × Python 3.10–3.12，含隐私扫描；不下载大模型、不�
 
 ---
 
+## 贡献者
+
+- [sdsdsssssdsd](https://github.com/sdsdsssssdsd)
+- [yangxingchen123](https://github.com/yangxingchen123)
+
+欢迎按 [`CONTRIBUTING.md`](CONTRIBUTING.md) 提交改动。默认 Provider / 路由变更仍需 benchmark 对照。
+
 ## 注意
 
 - 不要提交个人 PDF、模型权重、`.cache`、浏览器登录态、密钥

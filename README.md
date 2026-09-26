@@ -249,6 +249,13 @@ Public schemas (`DocumentIR`, QA, `run.json`, Provider) are **1.x: additive only
 
 ---
 
+## Contributors
+
+- [sdsdsssssdsd](https://github.com/sdsdsssssdsd)
+- [yangxingchen123](https://github.com/yangxingchen123)
+
+See [`CONTRIBUTING.md`](CONTRIBUTING.md) if you want to help. Issues that change default providers or routing still need a benchmark delta.
+
 ## Contributing / security
 
 [`CONTRIBUTING.md`](CONTRIBUTING.md) · [`SECURITY.md`](SECURITY.md)
