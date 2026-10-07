@@ -1,6 +1,6 @@
 # PDF2MD
 
-![PDF2MD](docs/images/product-promo.png)
+![PDF2MD — 五种模式、分层架构与真实进度条](docs/images/product-promo.png)
 
 Windows 桌面端：把 **学术 PDF / 截图变成能在 Typora、VS Code 里改的 Markdown**。
 

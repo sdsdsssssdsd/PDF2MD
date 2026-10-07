@@ -1,6 +1,6 @@
 # PDF2MD
 
-![PDF2MD](docs/images/product-promo.png)
+![PDF2MD — five workflows, layered architecture, real progress](docs/images/product-promo.png)
 
 Windows desktop app that turns **academic PDFs and screenshots into Markdown** you can actually edit in Typora or VS Code.
 
