@@ -212,6 +212,7 @@ class MainWindow(QMainWindow):
         self.daily_workspace.request_recognize.connect(self._on_daily_recognize)
         self.daily_workspace.request_save_markdown.connect(self._on_daily_save_markdown)
         self.daily_workspace.request_open_output.connect(self._open_output_root)
+        self.daily_workspace.request_cancel.connect(self._cancel)
         self.workspace_stack.addWidget(self.daily_workspace)
 
         doc = QWidget()
@@ -253,6 +254,7 @@ class MainWindow(QMainWindow):
         self.format_repair_workspace.save_requested.connect(
             self._on_format_repair_save
         )
+        self.format_repair_workspace.request_cancel.connect(self._cancel)
         self.workspace_stack.addWidget(self.format_repair_workspace)
 
         outer.addWidget(self.workspace_stack, 1)
@@ -641,6 +643,7 @@ class MainWindow(QMainWindow):
         v.log_line.connect(self._on_vision_log)
         v.stage.connect(self._on_stage)
         v.pipeline_stage.connect(self._on_pipeline_stage)
+        v.progress.connect(self._on_vision_progress)
         v.needs_clipboard.connect(self._on_vision_clipboard)
         v.needs_user.connect(self._on_vision_needs_user)
         v.needs_figures.connect(self._on_vision_figures)
@@ -653,11 +656,21 @@ class MainWindow(QMainWindow):
         d.log_line.connect(lambda msg: get_logger().info(msg) if msg else None)
         d.finished_ok.connect(self._on_daily_finished_ok)
         d.finished_archive.connect(self._on_daily_finished_archive)
+        d.progress.connect(self._on_daily_progress)
+
+    def _on_daily_progress(self, text: str, percent: object) -> None:
+        value = percent if isinstance(percent, int) else None
+        self.daily_workspace.set_progress(value, text or "")
 
     def _bind_repair_controller(self) -> None:
         r = self._repair
         r.finished_result.connect(self._on_format_repair_result)
         r.failed.connect(self._on_format_repair_failed)
+        r.progress.connect(self._on_repair_progress)
+
+    def _on_repair_progress(self, text: str, percent: object) -> None:
+        value = percent if isinstance(percent, int) else None
+        self.format_repair_workspace.set_progress(value, text or "")
 
     def _collect_vision_inputs(self, out_root: Path, workflow: str) -> VisionUiInputs:
         api = is_vision_api_workflow(workflow)
@@ -764,11 +777,19 @@ class MainWindow(QMainWindow):
             self.format_repair_workspace.set_status("格式修正未能启动")
 
     def _on_format_repair_result(self, result) -> None:
+        cancelled = self._repair.cancelled
         self.format_repair_workspace.set_busy(False)
+        if cancelled:
+            self.format_repair_workspace.set_status("已取消")
+            return
         self.format_repair_workspace.set_result(result)
 
     def _on_format_repair_failed(self, message: str) -> None:
+        cancelled = self._repair.cancelled
         self.format_repair_workspace.set_busy(False)
+        if cancelled:
+            self.format_repair_workspace.set_status("已取消")
+            return
         self.format_repair_workspace.set_status(f"格式修正失败：{message}")
 
     def _on_format_repair_save(self) -> None:
@@ -1203,18 +1224,31 @@ class MainWindow(QMainWindow):
         if not ok:
             self.daily_workspace.set_busy(False)
 
-    def _on_daily_finished_ok(self, md: str, err: str) -> None:
+    def _on_daily_finished_ok(self, md: str, err: str, warning: str = "") -> None:
+        cancelled = self._daily.cancelled
         self.daily_workspace.set_busy(False)
         if err:
+            if cancelled:
+                self.daily_workspace.set_status("已取消")
+                return
             self.daily_workspace.set_status(f"失败：{err}")
             QMessageBox.warning(self, "日常识图", err)
             return
         self.daily_workspace.set_result(md)
-        self.daily_workspace.set_status("识别完成 · 可直接复制")
+        if warning:
+            self.daily_workspace.set_status(f"识别完成（{warning}）· 可直接复制")
+        else:
+            self.daily_workspace.set_status("识别完成 · 可直接复制")
 
-    def _on_daily_finished_archive(self, md_path: str, err: str) -> None:
+    def _on_daily_finished_archive(
+        self, md_path: str, err: str, warning: str = ""
+    ) -> None:
+        cancelled = self._daily.cancelled
         self.daily_workspace.set_busy(False)
         if err:
+            if cancelled:
+                self.daily_workspace.set_status("已取消")
+                return
             self.daily_workspace.set_status(f"归档失败：{err}")
             QMessageBox.warning(self, "日常识图", err)
             return
@@ -1223,7 +1257,10 @@ class MainWindow(QMainWindow):
             self.daily_workspace.set_result(text)
         except Exception:
             pass
-        self.daily_workspace.set_status(f"已归档：{md_path}")
+        if warning:
+            self.daily_workspace.set_status(f"已归档：{md_path}（{warning}）")
+        else:
+            self.daily_workspace.set_status(f"已归档：{md_path}")
 
     def _on_drop(self, paths: list[str]) -> None:
         if not paths:
@@ -1568,6 +1605,7 @@ class MainWindow(QMainWindow):
         if is_vision_workflow(wf):
             self.command_bar.pipeline.set_mode("vision")
             self.command_bar.pipeline.set_stage("render")
+            self.command_bar.set_progress(0)  # 视觉模式：确定进度（页级）
             if is_vision_api_workflow(wf):
                 from app.vision_api.key_store import api_key_configured
 
@@ -1592,8 +1630,13 @@ class MainWindow(QMainWindow):
                 mode = inputs.browser_mode
                 status_panel = self.vision_status
                 start_msg = f"开始网页高保真 · 浏览器={mode} · 共 {len(waiting)} 篇"
-            if not self._save_mode_sibling() and not self.cb_per_folder.isChecked():
-                self._on_vision_log("[vision] 视觉模式输出到独立子文件夹（与快速模式隔离）")
+            if self._save_mode_sibling():
+                self._on_vision_log("[vision] 结果写在 PDF 旁的独立文件夹（目标不可写时回退导出目录）")
+            elif not self.cb_per_folder.isChecked():
+                self._on_vision_log(
+                    "[vision] 结果直接写入导出目录（<PDF名>.md + <PDF名>.images\\）；"
+                    "渲染页/批次/断点清单在 output\\_vision_work 下，不进导出目录"
+                )
             self._vision_run_active = True
             self.vision_status.clear()
             self.api_vision_status.clear()
@@ -1606,6 +1649,7 @@ class MainWindow(QMainWindow):
 
         self.command_bar.pipeline.set_mode("structured")
         self.command_bar.pipeline.set_stage("parse")
+        self.command_bar.set_progress(None)  # 结构化引擎无页级进度：保持活动条
         if not self._conversion.start(waiting, self._collect_conversion_inputs(out_root)):
             self.command_bar.set_running(False)
             return
@@ -1663,9 +1707,11 @@ class MainWindow(QMainWindow):
             return
         if self._daily.is_running():
             self._daily.cancel()
+            self.daily_workspace.set_status("正在取消…（当前批次结束后停止）")
             return
         if self._repair.is_running():
             self._repair.cancel()
+            self.format_repair_workspace.set_status("正在取消…（当前分段结束后停止）")
 
     def _on_task_status(self, task_id: str, status: str, message: str) -> None:
         task = self._tasks.get(task_id)
@@ -1768,7 +1814,11 @@ class MainWindow(QMainWindow):
         self._refresh_empty_state()
 
     def _task_output_dir_hint(self, task: ConvertTask) -> Path | None:
-        """任务输出目录提示：已有 output_dir 优先，否则按当前保存位置预判。"""
+        """任务输出目录提示：结果所在目录优先（扁平保存时就是导出目录）。"""
+        if task.output_md:
+            parent = Path(task.output_md).parent
+            if parent.is_dir():
+                return parent
         if task.output_dir:
             return Path(task.output_dir)
         wf = getattr(task, "workflow", "") or self._current_workflow()
@@ -1811,6 +1861,15 @@ class MainWindow(QMainWindow):
             QMessageBox.warning(self, "错误信息", t.error or "无错误信息")
         elif t.output_md and t.output_md.exists():
             QDesktopServices.openUrl(QUrl.fromLocalFile(str(t.output_md)))
+
+    def _on_vision_progress(self, text: str, percent: object) -> None:
+        """API 高精度 / 网页高保真：真实页级进度 → Command Bar 确定进度条。"""
+        if isinstance(percent, int):
+            self.command_bar.set_progress(percent)
+            label = f"{text} · {percent}%" if text else f"{percent}%"
+            self.stage_label.setText(label)
+        elif text:
+            self.stage_label.setText(text)
 
     def _on_stage(self, text: str) -> None:
         self.stage_label.setText(text)

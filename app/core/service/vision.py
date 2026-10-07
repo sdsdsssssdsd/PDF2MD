@@ -8,7 +8,12 @@ from typing import Any, Callable
 
 from app.core.domain.job import CancellationToken
 from app.task_model import ConvertTask, TaskStatus, WorkflowChoice, normalize_workflow
-from app.utils.paths import DEFAULT_SAVE_MODE, normalize_save_mode, resolve_vision_output_dir
+from app.utils.paths import (
+    DEFAULT_SAVE_MODE,
+    normalize_save_mode,
+    resolve_vision_paths,
+)
+from app.utils.progress import StreamProgress
 from app.vision_transcribe.config import VisionConfig
 from app.vision_transcribe.manifest import vision_dir
 from app.vision_transcribe.models import BatchStatus
@@ -19,6 +24,25 @@ from app.vision_transcribe.browser.base import ServerBusyCooldownError
 
 def _noop(*_args: Any, **_kwargs: Any) -> None:
     return None
+
+
+# 真实阶段占比：渲染 0–25%，逐批转录 25–85%，其余为合并/裁图/终稿
+RENDER_END = 25
+TRANSCRIBE_END = 85
+MERGE_PERCENT = 88
+FIGURES_PERCENT = 93
+FINALIZE_PERCENT = 97
+
+
+def stage_percent(stage: str, cur: int, total: int) -> int:
+    """把真实页数映射到阶段区间（不猜、不插值）。"""
+    total = max(1, int(total))
+    done = max(0, min(int(cur), total))
+    if stage == "render":
+        return int(RENDER_END * done / total)
+    if stage == "transcribe":
+        return RENDER_END + int((TRANSCRIBE_END - RENDER_END) * done / total)
+    return MERGE_PERCENT
 
 
 @dataclass
@@ -35,6 +59,7 @@ class VisionHooks:
     on_needs_clipboard: Callable[[str, int, int, int, str], None] = field(default=_noop)
     on_needs_user: Callable[[str, str], None] = field(default=_noop)
     on_needs_figures: Callable[[str, str], None] = field(default=_noop)
+    on_progress: Callable[[int, str], None] = field(default=_noop)  # percent, text
 
 
 @dataclass(frozen=True)
@@ -98,6 +123,9 @@ class VisionService:
         self._batch_page_retry_pages: dict[int, set[int]] = {}
         self._batch_sub_batch_tried: dict[int, bool] = {}
         self._batch_server_busy_waits: dict[int, int] = {}
+        self._task_index = 0
+        self._task_total = 1
+        self._last_percent = 0
 
     def request_cancel(self) -> None:
         self._cancel.cancel()
@@ -131,6 +159,27 @@ class VisionService:
     def _cancelled(self) -> bool:
         return self._cancel.is_cancelled() or bool(self._hooks.cancelled())
 
+    def _emit_progress(self, percent: int, text: str = "") -> None:
+        """把单个 PDF 的完成度折算到整批任务区间，再交给 UI（只前进，不倒退）。"""
+        value = max(0, min(100, int(percent)))
+        index = max(0, self._task_index)
+        total = max(1, self._task_total)
+        overall = int(round((index + value / 100.0) / total * 100.0))
+        if overall < self._last_percent:
+            overall = self._last_percent  # 批次重试 / 回到早期阶段时不倒退
+        self._last_percent = overall
+        self._hooks.on_progress(overall, str(text or ""))
+
+    def _attach_batch_progress(self, pipe: VisionPipeline, reporter: StreamProgress) -> None:
+        """API 模式：让当前批次按真实已接收字数推进（浏览器模式无此回调）。"""
+        try:
+            adapter = pipe.get_adapter()
+        except Exception:
+            return
+        setter = getattr(adapter, "set_progress_callback", None)
+        if callable(setter):
+            setter(reporter.feed)
+
     def _emit_log(self, msg: str) -> None:
         text = str(msg or "").rstrip()
         if not text:
@@ -147,6 +196,7 @@ class VisionService:
             pass
 
     def rebuild_figures(self, pdf_path: Path, output_dir: Path, *, stem: str) -> Path:
+        # 落盘布局（结果目录 / 图片目录名）从 manifest 读回，扁平保存也能重建
         pipe = VisionPipeline(
             Path(pdf_path),
             Path(output_dir),
@@ -155,32 +205,45 @@ class VisionService:
         )
         return pipe.rebuild_figures_and_finalize(stem=stem)
 
-    def run_task(self, task: ConvertTask) -> Path:
+    def run_task(
+        self, task: ConvertTask, *, task_index: int = 0, task_total: int = 1
+    ) -> Path:
+        self._task_index = max(0, int(task_index))
+        self._task_total = max(1, int(task_total))
         wf = normalize_workflow(task.workflow or WorkflowChoice.VISION_WEB.value)
         task.workflow = wf
-        out = resolve_vision_output_dir(
+        paths = resolve_vision_paths(
             self._output_root, task.pdf_path, wf, save_mode=self._save_mode
         )
-        task.output_dir = out
+        task.output_dir = paths.work_dir
         tid = task.id
         self._hooks.on_status(tid, TaskStatus.RUNNING.value, "页面渲染")
         self._hooks.on_pipeline_stage("render")
         self._hooks.on_stage("页面渲染")
+        self._emit_progress(0, "页面渲染 0 页")
 
         from app.core.runtime import get_runtime
 
         try:
             with get_runtime().job_scope(tid, kinds=self._resource_kinds(), cancelled=self._cancelled):
-                return self._run_task_body(task, out, tid)
+                return self._run_task_body(task, paths, tid)
         finally:
             self.close()
 
-    def _run_task_body(self, task: ConvertTask, out: Path, tid: str) -> Path:
+    def _run_task_body(self, task: ConvertTask, paths, tid: str) -> Path:
+        out = Path(paths.work_dir)
+        if getattr(paths, "flat", False):
+            self._emit_log(
+                f"[vision] 结果扁平写入 {paths.result_dir}；"
+                f"工作文件在 {paths.work_dir}"
+            )
         pipe = VisionPipeline(
             task.pdf_path,
             out,
             replace(self._config, force_rerun=bool(task.vision_force_rerun)),
             log=self._emit_log,
+            result_dir=paths.result_dir,
+            images_name=paths.images_name,
         )
         self._current_pipeline = pipe
 
@@ -188,10 +251,27 @@ class VisionService:
             self._hooks.on_status(
                 tid, TaskStatus.RUNNING.value, f"{label} {cur}/{total}"
             )
+            if label == "render":
+                self._emit_progress(
+                    stage_percent("render", cur, total), f"页面渲染 {cur}/{total}"
+                )
 
-        pipe.prepare(progress=_prog, cancelled=self._cancelled)
+        manifest = pipe.prepare(progress=_prog, cancelled=self._cancelled)
+        total_pages = max(1, int(manifest.page_count or 0))
+        self._emit_progress(
+            RENDER_END,
+            f"渲染完成 {manifest.page_count} 页 · {len(manifest.get_batches())} 批",
+        )
         if self._cancelled():
             raise RuntimeError("cancelled")
+
+        def _accepted_pages() -> int:
+            m = pipe._ensure_manifest()
+            return sum(
+                max(0, b.end_page - b.start_page + 1)
+                for b in m.get_batches()
+                if b.status == BatchStatus.ACCEPTED.value
+            )
 
         self._batch_auto_retries = {}
         self._batch_recopy_tried = {}
@@ -236,6 +316,25 @@ class VisionService:
                 TaskStatus.RUNNING.value,
                 f"视觉转录 {batch.start_page}–{batch.end_page}",
             )
+            done_pages = _accepted_pages()
+            batch_pages = max(0, batch.end_page - batch.start_page + 1)
+            self._emit_progress(
+                stage_percent("transcribe", done_pages, total_pages),
+                f"视觉转录 {done_pages}/{total_pages} 页（第 {batch.id} 批 "
+                f"{batch.start_page}–{batch.end_page}）",
+            )
+            reporter = StreamProgress(
+                # StreamProgress 回调签名是 (文本, 百分比)，本服务是 (百分比, 文本)
+                lambda text, percent: self._emit_progress(percent, text),
+                base=stage_percent("transcribe", done_pages, total_pages),
+                span=max(
+                    1,
+                    stage_percent("transcribe", done_pages + batch_pages, total_pages)
+                    - stage_percent("transcribe", done_pages, total_pages),
+                ),
+                label=f"第 {batch.id} 批 PAGE {batch.start_page:04d}–{batch.end_page:04d}",
+            )
+            self._attach_batch_progress(pipe, reporter)
 
             if self.is_auto_browser():
                 self._handle_auto_batch(tid, pipe, batch, out, max_auto_retry)
@@ -260,6 +359,7 @@ class VisionService:
 
         self._hooks.on_pipeline_stage("merge")
         self._hooks.on_status(tid, TaskStatus.RUNNING.value, "合并与格式清理")
+        self._emit_progress(MERGE_PERCENT, "合并与格式清理")
         pipe.merge_and_clean()
         pending = pipe.pending_figures()
         if not pending:
@@ -282,6 +382,7 @@ class VisionService:
                 TaskStatus.RUNNING.value,
                 f"Docling 自动裁图 0/{len(pending)}",
             )
+            self._emit_progress(FIGURES_PERCENT, f"Docling 裁图 0/{len(pending)}")
             filled = pipe.auto_extract_figures()
             still = pipe.pending_figures()
             if still:
@@ -292,11 +393,16 @@ class VisionService:
                 )
             if filled:
                 self._emit_log(f"Figure 自动写入完成（{filled} 张）")
+            self._emit_progress(
+                FIGURES_PERCENT + 2, f"Docling 裁图完成（{filled} 张）"
+            )
+        self._emit_progress(FINALIZE_PERCENT, "写回终稿")
         final = pipe.finalize(stem=task.pdf_path.stem)
         task.output_md = final
         task.vision_force_rerun = False
         self._hooks.on_pipeline_stage("idle")
         self._hooks.on_status(tid, TaskStatus.RUNNING.value, "完成")
+        self._emit_progress(100, "完成")
         self._emit_log(f"高保真完成: {final}")
         return Path(final)
 

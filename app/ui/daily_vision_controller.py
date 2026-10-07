@@ -29,9 +29,10 @@ class DailyVisionViewState:
 
 class DailyVisionController(QObject):
     view_state_changed = Signal(object)
-    finished_ok = Signal(str, str)
-    finished_archive = Signal(str, str)
+    finished_ok = Signal(str, str, str)  # markdown, error, warning
+    finished_archive = Signal(str, str, str)  # md_path, error, warning
     log_line = Signal(str)
+    progress = Signal(str, object)  # 阶段文本, 百分比
     batch_finished = Signal()
 
     def __init__(self, parent=None, *, worker_factory: WorkerFactory | None = None) -> None:
@@ -44,6 +45,10 @@ class DailyVisionController(QObject):
     @property
     def inputs_snapshot(self) -> DailyVisionUiInputs | None:
         return self._inputs_snapshot
+
+    @property
+    def cancelled(self) -> bool:
+        return self._cancelled
 
     def is_running(self) -> bool:
         worker = self._worker
@@ -74,6 +79,9 @@ class DailyVisionController(QObject):
         worker.finished_ok.connect(self._on_ok)
         worker.finished_archive.connect(self._on_archive)
         worker.log_line.connect(self.log_line.emit)
+        worker_progress = getattr(worker, "progress", None)
+        if worker_progress is not None and hasattr(worker_progress, "connect"):
+            worker_progress.connect(self.progress.emit)
         worker.finished.connect(self._on_worker_finished)
         self._emit_state(
             DailyVisionViewState(
@@ -105,23 +113,23 @@ class DailyVisionController(QObject):
         if callable(wait):
             wait(timeout_ms)
 
-    def _on_ok(self, markdown: str, error: str) -> None:
-        self.finished_ok.emit(markdown, error)
+    def _on_ok(self, markdown: str, error: str, warning: str = "") -> None:
+        self.finished_ok.emit(markdown, error, warning)
         self._emit_state(
             DailyVisionViewState(
                 running=True,
-                message=error or "识别完成",
+                message=error or (f"识别完成（{warning}）" if warning else "识别完成"),
                 archive=False,
                 result_status="failed" if error else "verified",
             )
         )
 
-    def _on_archive(self, md_path: str, error: str) -> None:
-        self.finished_archive.emit(md_path, error)
+    def _on_archive(self, md_path: str, error: str, warning: str = "") -> None:
+        self.finished_archive.emit(md_path, error, warning)
         self._emit_state(
             DailyVisionViewState(
                 running=True,
-                message=error or "已归档",
+                message=error or (f"已归档（{warning}）" if warning else "已归档"),
                 archive=True,
                 result_status="failed" if error else "verified",
             )

@@ -14,12 +14,19 @@ def writeback_figures(
     *,
     md_path: Path | None = None,
     output_dir: Path | None = None,
+    images_dir: Path | None = None,
     image_path_mode: str = "relative",
     figure_labels: dict[str, int] | None = None,
 ) -> str:
-    """按标记替换；已是 ![](...) 的不重复追加。幂等。"""
+    """按标记替换；已是 ![](...) 的不重复追加。幂等。
+
+    images_dir：图片实际所在目录（默认 <output_dir>/images）。扁平保存时可能是
+    <导出目录>/<PDF名>.images/，md 与图片不同目录也按真实相对路径写出。
+    """
     by_key = {f.marker: f for f in figures if f.status == "done" and f.file}
-    images_dir = (output_dir / "images") if output_dir else Path("images")
+    check_exists = output_dir is not None or images_dir is not None
+    if images_dir is None:
+        images_dir = (output_dir / "images") if output_dir else Path("images")
     md_parent = md_path.parent if md_path else Path(".")
     labels = figure_labels or {}
 
@@ -31,14 +38,9 @@ def writeback_figures(
         if not rec:
             return m.group(0)
         fname = Path(str(rec.file).replace("\\", "/")).name
-        if output_dir is not None:
-            if not (output_dir / "images" / fname).is_file():
-                return m.group(0)
-            url = f"images/{fname}"
-        elif image_path_mode == "absolute":
-            url = _format_url(images_dir, fname, md_parent, "absolute")
-        else:
-            url = _format_url(images_dir, fname, md_parent, image_path_mode)
+        if check_exists and not (images_dir / fname).is_file():
+            return m.group(0)
+        url = _format_url(images_dir, fname, md_parent, image_path_mode)
         alt = f"Figure {labels[key]}" if key in labels else "Figure"
         return f"![{alt}]({url})"
 

@@ -138,7 +138,7 @@ def validate_batch_markdown(
     try:
         from app.vision_transcribe.formula_integrity import formula_integrity_errors
 
-        errors.extend(formula_integrity_errors(md or ""))
+        errors.extend(formula_integrity_errors(md or "", start_page=start_page))
     except Exception:
         pass
 

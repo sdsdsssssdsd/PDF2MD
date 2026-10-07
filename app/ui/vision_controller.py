@@ -60,6 +60,7 @@ class VisionController(QObject):
     needs_clipboard = Signal(str, int, int, int, str)
     needs_user = Signal(str, str)
     needs_figures = Signal(str, str)
+    progress = Signal(str, object)  # 阶段文本, 百分比(0–100)
     rebuild_finished = Signal(str, str)
     rebuild_failed = Signal(str, str)
     batch_finished = Signal()
@@ -109,6 +110,9 @@ class VisionController(QObject):
         worker.needs_clipboard.connect(self.needs_clipboard.emit)
         worker.needs_user.connect(self.needs_user.emit)
         worker.needs_figures.connect(self.needs_figures.emit)
+        worker_progress = getattr(worker, "progress", None)
+        if worker_progress is not None and hasattr(worker_progress, "connect"):
+            worker_progress.connect(self.progress.emit)
         worker.finished.connect(self._on_worker_finished)
         self._emit_state(
             VisionViewState(

@@ -13,6 +13,7 @@ from app.format_repair.models import RepairConfig
 class FormatRepairWorker(QThread):
     finished_result = Signal(object)
     failed = Signal(str)
+    progress = Signal(str, object)  # 阶段文本, 百分比
 
     def __init__(
         self,
@@ -36,6 +37,13 @@ class FormatRepairWorker(QThread):
         self._cancel = True
         self._mutex.unlock()
 
+    def is_cancelled(self) -> bool:
+        self._mutex.lock()
+        try:
+            return self._cancel
+        finally:
+            self._mutex.unlock()
+
     def run(self) -> None:
         try:
             result, _artifact = RepairService().run(
@@ -43,6 +51,8 @@ class FormatRepairWorker(QThread):
                 self._config,
                 source_path=self._source_path,
                 snapshot=self._snapshot,
+                progress=lambda text, percent: self.progress.emit(text, percent),
+                cancelled=self.is_cancelled,
             )
             self.finished_result.emit(result)
         except Exception as exc:

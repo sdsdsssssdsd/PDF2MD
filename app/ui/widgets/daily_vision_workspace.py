@@ -4,7 +4,7 @@ from __future__ import annotations
 from datetime import datetime
 from pathlib import Path
 
-from PySide6.QtCore import Qt, Signal
+from PySide6.QtCore import Signal
 from PySide6.QtGui import QGuiApplication
 from PySide6.QtWidgets import (
     QFileDialog,
@@ -17,6 +17,7 @@ from PySide6.QtWidgets import (
 )
 
 from app.drop_widget import DropWidget
+from app.ui.widgets.progress_row import ProgressRow
 
 
 class DailyVisionWorkspace(QWidget):
@@ -24,6 +25,7 @@ class DailyVisionWorkspace(QWidget):
     request_recognize = Signal(list, bool)  # paths, archive
     request_save_markdown = Signal(str)
     request_open_output = Signal()
+    request_cancel = Signal()
 
     def __init__(self, parent=None) -> None:
         super().__init__(parent)
@@ -31,6 +33,10 @@ class DailyVisionWorkspace(QWidget):
 
         lay = QVBoxLayout(self)
         lay.setContentsMargins(0, 0, 8, 0)
+
+        # 顶部进度行：确定进度条（0–100，按真实已处理张数/已接收字数推进）+ 阶段文本
+        self.progress_row = ProgressRow()
+        lay.addWidget(self.progress_row)
 
         self.drop = DropWidget()
         self.drop.set_mode("images")
@@ -60,12 +66,18 @@ class DailyVisionWorkspace(QWidget):
         self.btn_clear.clicked.connect(self.clear)
         self.btn_retry = QPushButton("重新识别")
         self.btn_retry.clicked.connect(self._retry)
+        self.btn_cancel = QPushButton("取消识别")
+        self.btn_cancel.setProperty("variant", "danger")
+        self.btn_cancel.setToolTip("停止后续批次（Esc 同效）")
+        self.btn_cancel.clicked.connect(self.request_cancel.emit)
+        self.btn_cancel.setVisible(False)
         for b in (
             self.btn_copy,
             self.btn_save_md,
             self.btn_save,
             self.btn_open_out,
             self.btn_retry,
+            self.btn_cancel,
             self.btn_clear,
         ):
             btn_row.addWidget(b)
@@ -149,13 +161,27 @@ class DailyVisionWorkspace(QWidget):
     def set_result(self, markdown: str) -> None:
         self.result.setPlainText(markdown or "")
 
+    def set_progress(self, percent: int | None, text: str = "") -> None:
+        """percent 为真实完成度 0–100（None = 数值不变，只更新阶段文本）。"""
+        self.progress_row.set_progress(percent, text)
+
     def set_status(self, text: str) -> None:
-        self.lbl_status.setText(text or "")
+        """运行中显示在进度行；空闲时显示在底部状态栏。"""
+        if self.progress_row.is_busy():
+            self.progress_row.set_status(text)
+        else:
+            self.lbl_status.setText(text or "")
 
     def set_busy(self, busy: bool) -> None:
+        self._busy = bool(busy)
         self.drop.setEnabled(not busy)
         self.btn_retry.setEnabled(not busy)
         self.btn_save.setEnabled(not busy)
+        self.btn_cancel.setVisible(bool(busy))
+        self.progress_row.set_busy(busy)
+
+    def is_busy(self) -> bool:
+        return self._busy
 
     def clear(self) -> None:
         self._image_paths.clear()

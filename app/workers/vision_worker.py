@@ -22,6 +22,7 @@ class VisionConversionWorker(QThread):
     needs_clipboard = Signal(str, int, int, int, str)  # task_id, batch_id, start, end, hint
     needs_user = Signal(str, str)  # task_id, message
     needs_figures = Signal(str, str)  # task_id, output_dir
+    progress = Signal(str, object)  # 阶段文本, 百分比(0–100)
 
     def __init__(
         self,
@@ -113,6 +114,7 @@ class VisionConversionWorker(QThread):
             ),
             on_needs_user=self.needs_user.emit,
             on_needs_figures=self.needs_figures.emit,
+            on_progress=lambda percent, text: self.progress.emit(text, percent),
         )
 
     def run(self) -> None:
@@ -127,13 +129,14 @@ class VisionConversionWorker(QThread):
         if self._cancelled():
             service.request_cancel()
         try:
-            for task in self._tasks:
+            total = len(self._tasks)
+            for index, task in enumerate(self._tasks):
                 if self._cancelled():
                     self.task_status.emit(task.id, TaskStatus.CANCELLED.value, "已取消")
                     continue
                 t0 = time.perf_counter()
                 try:
-                    service.run_task(task)
+                    service.run_task(task, task_index=index, task_total=total)
                     elapsed = time.perf_counter() - t0
                     out_md = str(task.output_md or "")
                     out_dir = str(task.output_dir or "")

@@ -393,6 +393,124 @@ def test_formula_integrity_accepts_tag_as_eq1():
     assert not formula_integrity_errors(md)
 
 
+def test_formula_integrity_mid_batch_does_not_require_eq1():
+    from app.vision_transcribe.formula_integrity import formula_integrity_errors
+
+    tags = "\n\n".join(f"$$\nE_{n}=x\\tag{{{n}}}\n$$" for n in range(8, 29))
+    md = "<!-- PDF2MD:PAGE:0007 -->\n" + tags
+    assert formula_integrity_errors(md, start_page=7) == []
+    r = validate_batch_markdown(md, start_page=7, end_page=12)
+    assert not any("不连续" in e for e in r.errors)
+
+
+def test_formula_integrity_mid_batch_still_flags_internal_gap():
+    from app.vision_transcribe.formula_integrity import formula_integrity_errors
+
+    md = (
+        "<!-- PDF2MD:PAGE:0007 -->\n"
+        "$$\nE_8=x\\tag{8}\n$$\n\n"
+        "$$\nE_9=x\\tag{9}\n$$\n\n"
+        "$$\nE_{11}=x\\tag{11}\n$$\n"
+    )
+    errs = formula_integrity_errors(md, start_page=7)
+    assert any("缺少 [10]" in e for e in errs)
+    first = formula_integrity_errors(md, start_page=1)
+    assert any("缺少" in e and "1" in e for e in first)
+
+
+def test_formula_integrity_ignores_subquestion_labels():
+    """小问编号「解答. (1)」「(3)」不是方程式编号，不得把整批判成失败。
+
+    历史故障：第十六届/第十五届全国大学生数学竞赛初赛，模型把解答小问写成
+    行末 (1)/(3) 标题行 → 被当成编号方程式 → 「缺少 (2)」→ 重试 3 次仍失败。
+    """
+    from app.vision_transcribe.formula_integrity import formula_integrity_errors
+
+    md = (
+        "<!-- PDF2MD:PAGE:0001 -->\n"
+        "一、计算下列各题（共 20 分）\n\n"
+        "(1) 求极限\n\n"
+        "解答. (1)\n"
+        "$$\n"
+        "\\int \\ln(1+x^2)\\,\\mathrm{d}x = x\\ln(1+x^2) - 2x + 2\\arctan x + C.\n"
+        "$$\n\n"
+        "故原式等于 $\\ln 2 - 2 + \\frac{\\pi}{2}$。\n\n"
+        "(2) 利用极坐标变换 $x = \\rho \\cos \\theta$，则\n"
+        "$$\n\\lim_{r \\to 0^+} \\cdots\n$$\n\n"
+        "(3)\n"
+        "$$\n\\int_0^1 f(x)\\,\\mathrm{d}x = \\frac{\\pi}{2}.\n$$\n"
+    )
+    assert formula_integrity_errors(md, start_page=1) == []
+
+
+def test_formula_integrity_still_flags_gap_between_display_equations():
+    """$$ 块内真正的行末编号仍必须连续。"""
+    from app.vision_transcribe.formula_integrity import formula_integrity_errors
+
+    md = (
+        "<!-- PDF2MD:PAGE:0001 -->\n"
+        "$$\nE_1 = x \\quad (1)\n$$\n\n"
+        "$$\nE_3 = z \\quad (3)\n$$\n"
+    )
+    errs = formula_integrity_errors(md, start_page=1)
+    assert any("缺少 [2]" in e for e in errs)
+
+
+def test_formula_integrity_counts_bare_latex_numbering():
+    """没有 $$ 围栏、但行内是 LaTeX 的行末编号，仍算方程式编号。"""
+    from app.vision_transcribe.formula_integrity import numbered_equation_numbers
+
+    md = "\\logit(P) = \\beta_0 \\quad (1)\n\\logit(Q) = \\beta_1 \\quad (3)\n"
+    assert numbered_equation_numbers(md) == [1, 3]
+
+
+def test_finalize_writes_flat_result_layout(tmp_path: Path):
+    """扁平保存：最终 md 落在结果目录，图片在 <PDF名>.images/，链接按真实相对路径写。"""
+    from app.vision_transcribe.figure_store import save_figures_json
+    from app.vision_transcribe.manifest import VisionManifest, save_manifest, vision_dir
+    from app.vision_transcribe.models import FigureRecord
+    from app.vision_transcribe.pipeline import VisionPipeline
+
+    pdf = tmp_path / "paper.pdf"
+    pdf.write_bytes(b"%PDF-1.4\n")
+    work = tmp_path / "work"
+    result = tmp_path / "out"
+    pipe = VisionPipeline(pdf, work, result_dir=result, images_name="paper.images")
+
+    (work / "bookfigures").mkdir(parents=True)
+    vdir = vision_dir(work)
+    vdir.mkdir(parents=True, exist_ok=True)
+    save_manifest(work, VisionManifest(pdf="paper.pdf", page_count=1))
+    body = "# 标题\n\n" + ("正文内容，用于通过长度检查。\n" * 40)
+    (vdir / "document.cleaned.md").write_text(
+        body + "\n<!-- PDF2MD:FIGURE:p0001:f01 -->\n\n结尾。\n", encoding="utf-8"
+    )
+    images = result / "paper.images"
+    images.mkdir(parents=True, exist_ok=True)
+    (images / "image_1_paper.png").write_bytes(b"\x89PNG\r\n\x1a\n")
+    save_figures_json(
+        work,
+        [
+            FigureRecord(
+                marker="p0001:f01",
+                page=1,
+                index=1,
+                file="image_1_paper.png",
+                status="done",
+            )
+        ],
+    )
+
+    final = pipe.finalize()
+    assert final == result / "paper.md"
+    assert final.is_file()
+    text = final.read_text(encoding="utf-8")
+    assert "paper.images/image_1_paper.png" in text
+    assert "PDF2MD:FIGURE" not in text
+    # 工作目录保持不动（渲染页 / 批次 / manifest 仍在那里）
+    assert (work / ".vision" / "document.cleaned.md").is_file()
+
+
 def test_validator_rejects_sidebar_contamination():
     md = (
         "Cursor聊天记录\nPDF转Markdown\n"

@@ -60,6 +60,102 @@ def test_format_repair_workspace_exists():
     w.close()
 
 
+def test_daily_workspace_progress_bar():
+    _app()
+    w = MainWindow()
+    ws = w.daily_workspace
+    row = ws.progress_row
+    assert row.isHidden()
+
+    ws.set_busy(True)
+    assert not row.isHidden()
+    assert row.bar.value() == 0
+    assert row.percent_label.text() == "0%"
+    assert ws.is_busy()
+    assert not ws.btn_cancel.isHidden()
+
+    ws.set_status("识别中…")
+    assert "识别中" in row.status_text()
+    assert "已用 0s" in row.status_text()  # 运行中显示耗时
+
+    ws.set_progress(42, "第 2/7 批 · 已接收 1,234 字")
+    assert row.bar.value() == 42
+    assert row.percent_label.text() == "42%"
+    assert "第 2/7 批" in row.status_text()
+
+    # 控制器 → 工作区（MainWindow 接线）
+    w._daily.progress.emit("已完成 12/39 张", 27)
+    assert row.bar.value() == 27
+    assert row.percent_label.text() == "27%"
+    assert "已完成 12/39 张" in row.status_text()
+
+    ws.set_busy(False)
+    assert row.isHidden()
+    assert not ws.is_busy()
+    assert ws.btn_cancel.isHidden()
+    # 收尾消息回到窗口底部状态栏
+    ws.set_status("识别完成 · 可直接复制")
+    assert "识别完成" in ws.lbl_status.text()
+    w.close()
+
+
+def test_api_vision_command_bar_progress():
+    """API 高精度：页级进度 → Command Bar 确定进度条 + 阶段文本带百分比。"""
+    _app()
+    w = MainWindow()
+    w.workflow_picker.set_value("vision_api")
+    assert not w.command_bar.isHidden()
+
+    w.command_bar.set_running(True)
+    w.command_bar.set_progress(0)
+    w._vision.progress.emit("页面渲染 3/30", 12)
+    assert w.command_bar.progress.maximum() == 100
+    assert w.command_bar.progress.value() == 12
+    assert "12%" in w.stage_label.text()
+    assert "页面渲染 3/30" in w.stage_label.text()
+
+    w._vision.progress.emit("视觉转录 6/30 页（第 2 批 0007–0012）", 40)
+    assert w.command_bar.progress.value() == 40
+    assert "40%" in w.stage_label.text()
+
+    w.command_bar.set_running(False)
+    assert w.command_bar.progress.isHidden()
+    w.close()
+
+
+def test_format_repair_workspace_progress_bar():
+    _app()
+    w = MainWindow()
+    ws = w.format_repair_workspace
+    row = ws.progress_row
+    assert row.isHidden()
+
+    ws.set_busy(True)
+    assert not row.isHidden()
+    assert row.bar.value() == 0
+    assert not ws.btn_cancel.isHidden()
+
+    ws.set_status("正在修正格式…")
+    assert "正在修正格式" in row.status_text()
+    assert "已用 0s" in row.status_text()
+
+    ws.set_progress(46, "第 2/3 段 · 已接收 8,120 字")
+    assert row.bar.value() == 46
+    assert row.percent_label.text() == "46%"
+
+    # 控制器 → 工作区（MainWindow 接线）
+    w._repair.progress.emit("已完成 2/3 段", 60)
+    assert row.bar.value() == 60
+    assert "已完成 2/3 段" in row.status_text()
+
+    ws.set_busy(False)
+    assert row.isHidden()
+    assert ws.btn_cancel.isHidden()
+    ws.set_status("DeepSeek 已修正 · 2 段")
+    assert "已修正" in ws.lbl_status.text()
+    w.close()
+
+
 def test_experiment_core_columns_hidden_rest():
     assert len(CORE_COLUMNS) == 9
     assert len(_CORE_COLS) == 9

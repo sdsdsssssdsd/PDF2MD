@@ -17,6 +17,7 @@ MANIFEST_VERSION = 2
 class VisionManifest:
     version: int = MANIFEST_VERSION
     pdf: str = ""
+    pdf_path: str = ""
     page_count: int = 0
     render_scale: float = 3.0
     batch_size: int = 10
@@ -35,6 +36,9 @@ class VisionManifest:
     thinking: str = ""
     transport: str = ""
     detail: str = ""
+    # 扁平保存（导出目录·不建子文件夹）时的落盘位置：结果目录与图片目录名
+    result_dir: str = ""
+    images_name: str = "images"
 
     def to_dict(self) -> dict[str, Any]:
         return asdict(self)

@@ -25,10 +25,15 @@ class DeepSeekApiVisionAdapter(VisionWebAdapter):
         self._log = log or (lambda _m: None)
         self._output_dir: Path | None = None
         self._batch_id: int | None = None
+        self._on_delta: Callable[[int], None] | None = None
 
     def set_capture_context(self, output_dir: Path, batch_id: int) -> None:
         self._output_dir = Path(output_dir)
         self._batch_id = int(batch_id)
+
+    def set_progress_callback(self, callback: Callable[[int], None] | None) -> None:
+        """每批开始前设置：把「已接收累计字数」回调给进度条。"""
+        self._on_delta = callback
 
     def submit_batch(self, images: list[Path], prompt: str) -> AdapterResult:
         cache_file = cache_path(self._output_dir)
@@ -41,6 +46,7 @@ class DeepSeekApiVisionAdapter(VisionWebAdapter):
                 profile=PDF_VISION,
                 cache_file=cache_file,
                 prefer_files=prefer,
+                on_delta=self._on_delta,
             )
             stats = {
                 "backend": "deepseek_api",

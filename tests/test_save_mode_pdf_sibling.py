@@ -18,6 +18,7 @@ from app.utils.paths import (
     normalize_save_mode,
     resolve_output_dir,
     resolve_vision_output_dir,
+    resolve_vision_paths,
     sibling_archive_dir,
     sibling_archive_dir_writable,
     task_output_dir,
@@ -120,11 +121,88 @@ def test_resolve_output_dir_respects_root_modes(tmp_path: Path):
         resolve_output_dir(root, pdf, STRUCTURED, save_mode=SAVE_MODE_ROOT_FOLDER)
         == root / "paper"
     )
-    # 视觉模式没有「平铺」语义，root_flat 也保持独立子文件夹
+    # 视觉模式 root_flat：结果扁平落在导出目录，工作目录移到应用侧 _vision_work
+    paths = resolve_vision_paths(root, pdf, VISION_WEB, save_mode=SAVE_MODE_ROOT_FLAT)
+    assert paths.flat is True
+    assert paths.result_dir == root
+    assert paths.images_dir == root / "paper.images"
+    assert paths.work_dir != root
+    assert "_vision_work" in paths.work_dir.parts
+    # 兼容入口返回工作目录（manifest / 渲染页在那里）
     assert (
         resolve_output_dir(root, pdf, VISION_WEB, save_mode=SAVE_MODE_ROOT_FLAT)
-        == root / "paper_高保真"
+        == paths.work_dir
     )
+
+
+def test_vision_paths_non_flat_keeps_single_dir(tmp_path: Path):
+    pdf = _pdf(tmp_path)
+    root = tmp_path / "out"
+    for mode, expected in (
+        (SAVE_MODE_ROOT_FOLDER, root / "paper_高保真"),
+        (SAVE_MODE_PDF_SIBLING, tmp_path / "paper_高保真"),
+    ):
+        paths = resolve_vision_paths(root, pdf, VISION_WEB, save_mode=mode)
+        assert paths.flat is False
+        assert paths.work_dir == expected
+        assert paths.result_dir == expected
+        assert paths.images_dir == expected / "images"
+        assert paths.images_name == "images"
+
+
+def test_vision_paths_flat_includes_path_hash(tmp_path: Path):
+    """扁平保存：工作目录按「PDF 名 + 路径哈希」隔离，同名不同路径不共享。"""
+    pdf = _pdf(tmp_path)
+    root = tmp_path / "out"
+    paths = resolve_vision_paths(root, pdf, VISION_API, save_mode=SAVE_MODE_ROOT_FLAT)
+    assert paths.flat is True
+    assert paths.work_dir.name.startswith("paper_API视觉_")
+    assert paths.work_dir.parent.name == "_vision_work"
+
+    other_dir = tmp_path / "sub"
+    other_dir.mkdir()
+    other = _pdf(other_dir)
+    fresh = resolve_vision_paths(root, other, VISION_API, save_mode=SAVE_MODE_ROOT_FLAT)
+    assert fresh.work_dir != paths.work_dir
+
+
+def test_vision_paths_flat_adopts_legacy_work_dir(tmp_path: Path):
+    """扁平化之前遗留的 <导出目录>/<PDF名>_API视觉/ 继续当工作目录：不重渲染、不重调 API。"""
+    import json
+
+    pdf = _pdf(tmp_path)
+    root = tmp_path / "out"
+    legacy = root / "paper_API视觉"
+    (legacy / ".vision").mkdir(parents=True)
+    (legacy / ".vision" / "manifest.json").write_text(
+        json.dumps({"pdf": "paper.pdf"}), encoding="utf-8"
+    )
+
+    paths = resolve_vision_paths(root, pdf, VISION_API, save_mode=SAVE_MODE_ROOT_FLAT)
+    assert paths.work_dir == legacy
+    assert paths.result_dir == root
+    assert paths.images_name == "paper.images"
+
+
+def test_vision_paths_flat_rejects_legacy_of_another_pdf(tmp_path: Path):
+    """旧 manifest 记了别的 PDF 路径时不得沿用（否则会串用别人的转录结果）。"""
+    import json
+
+    pdf = _pdf(tmp_path)
+    other_dir = tmp_path / "sub"
+    other_dir.mkdir()
+    other = _pdf(other_dir)
+    root = tmp_path / "out"
+    legacy = root / "paper_API视觉"
+    (legacy / ".vision").mkdir(parents=True)
+    (legacy / ".vision" / "manifest.json").write_text(
+        json.dumps({"pdf": "paper.pdf", "pdf_path": str(other)}), encoding="utf-8"
+    )
+
+    mine = resolve_vision_paths(root, pdf, VISION_API, save_mode=SAVE_MODE_ROOT_FLAT)
+    theirs = resolve_vision_paths(root, other, VISION_API, save_mode=SAVE_MODE_ROOT_FLAT)
+    assert mine.work_dir != legacy
+    assert theirs.work_dir == legacy
 
 
 def test_compile_conversion_options_carries_save_mode(tmp_path: Path):

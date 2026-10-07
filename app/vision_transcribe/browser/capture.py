@@ -564,7 +564,7 @@ class DeepSeekCaptureMixin:
                     f"KaTeX {dom_katex_chars} 字（PAGE {sp}-{ep}）。"
                 )
 
-        integrity_errs = formula_integrity_errors(best)
+        integrity_errs = formula_integrity_errors(best, start_page=sp or None)
         if integrity_errs:
             raise RuntimeError(
                 "公式完整性校验失败（禁止静默丢式）："

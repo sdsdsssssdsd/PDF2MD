@@ -17,12 +17,14 @@ from PySide6.QtWidgets import (
 
 from app.format_repair.file_io import FileSnapshot, read_text_file
 from app.format_repair.models import FormatRepairResult, RepairConfig
+from app.ui.widgets.progress_row import ProgressRow
 
 
 class FormatRepairWorkspace(QWidget):
     repair_requested = Signal(str, bool)
     import_requested = Signal(Path)
     save_requested = Signal()
+    request_cancel = Signal()
 
     def __init__(self, parent=None) -> None:
         super().__init__(parent)
@@ -34,6 +36,10 @@ class FormatRepairWorkspace(QWidget):
         lay.setContentsMargins(0, 0, 8, 0)
         lay.setSpacing(8)
 
+        # 顶部进度行：确定进度条（按真实已修正段数/已接收字数推进）+ 阶段文本
+        self.progress_row = ProgressRow()
+        lay.addWidget(self.progress_row)
+
         self.input = QPlainTextEdit()
         self.input.setPlaceholderText("粘贴已有 Markdown，或导入 .md / .txt。整篇交给 DeepSeek 修格式。")
         self.input.setMinimumHeight(160)
@@ -44,7 +50,12 @@ class FormatRepairWorkspace(QWidget):
         self.btn_paste = QPushButton("粘贴")
         self.btn_repair = QPushButton("修正格式")
         self.btn_repair.setToolTip("调用 DeepSeek API，返回完整修正版 Markdown")
-        for b in (self.btn_import, self.btn_paste, self.btn_repair):
+        self.btn_cancel = QPushButton("取消修正")
+        self.btn_cancel.setProperty("variant", "danger")
+        self.btn_cancel.setToolTip("停止后续分段（Esc 同效）")
+        self.btn_cancel.clicked.connect(self.request_cancel.emit)
+        self.btn_cancel.setVisible(False)
+        for b in (self.btn_import, self.btn_paste, self.btn_repair, self.btn_cancel):
             mid.addWidget(b)
         mid.addStretch(1)
         lay.addLayout(mid)
@@ -122,20 +133,48 @@ class FormatRepairWorkspace(QWidget):
         if result.ok:
             saved = result.report.get("saved_path")
             chunks = result.report.get("chunks", 1)
+            rolled = int(result.report.get("rolled_back") or 0)
+            fixed = int(result.report.get("delimiters_normalized") or 0)
             status = f"DeepSeek 已修正 · {chunks} 段"
+            if rolled:
+                status += f" · {rolled} 段内容漂移保持原样"
+            if fixed:
+                status += f" · 统一公式定界符 {fixed} 处"
             if saved:
                 status += f" · 已保存 {Path(saved).name}"
+            if rolled:
+                status += f"（{self._first_warning(result)}）"
             self.set_status(status)
         else:
             self.set_status("修复失败：" + "；".join(result.errors))
+
+    @staticmethod
+    def _first_warning(result: FormatRepairResult) -> str:
+        for w in result.warnings:
+            if "回滚" in w or "漂移" in w:
+                return w
+        return result.warnings[0] if result.warnings else ""
 
     def set_busy(self, busy: bool) -> None:
         self.btn_repair.setEnabled(not busy)
         self.btn_import.setEnabled(not busy)
         self.btn_paste.setEnabled(not busy)
+        self.btn_cancel.setVisible(bool(busy))
+        self.progress_row.set_busy(busy)
+
+    def set_progress(self, percent: int | None, text: str = "") -> None:
+        """percent 为真实完成度 0–100（None = 数值不变，只更新阶段文本）。"""
+        self.progress_row.set_progress(percent, text)
+
+    def is_busy(self) -> bool:
+        return self.progress_row.is_busy()
 
     def set_status(self, text: str) -> None:
-        self.lbl_status.setText(text or "")
+        """运行中显示在进度行；空闲时显示在底部状态栏。"""
+        if self.progress_row.is_busy():
+            self.progress_row.set_status(text)
+        else:
+            self.lbl_status.setText(text or "")
 
     def source_snapshot(self) -> tuple[Path | None, FileSnapshot]:
         return self._source_path, self._snapshot

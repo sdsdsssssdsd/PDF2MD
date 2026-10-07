@@ -73,5 +73,14 @@ class CommandBar(QFrame):
         self.clear.setEnabled(not running)
         self.progress.setVisible(running)
 
+    def set_progress(self, percent: int | None) -> None:
+        """确定进度 0–100；None = 不确定（活动条，用于无页级进度的引擎）。"""
+        if percent is None:
+            self.progress.setRange(0, 0)
+            return
+        value = max(0, min(100, int(percent)))
+        self.progress.setRange(0, 100)
+        self.progress.setValue(value)
+
     def set_count(self, done: int, total: int) -> None:
         self.count.setText(f"已完成 {done} / {total}")

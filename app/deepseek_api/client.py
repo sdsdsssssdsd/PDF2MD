@@ -24,6 +24,7 @@ from app.deepseek_api.errors import (
     VisionApiError,
 )
 from app.deepseek_api.image_transport import prepare_images
+from app.deepseek_api.json_salvage import repair_truncated_json
 from app.deepseek_api.key_store import get_api_key
 from app.deepseek_api.models import ImagePayload, TranscribeResult
 from app.deepseek_api.profiles import (
@@ -35,6 +36,7 @@ from app.deepseek_api.profiles import (
 )
 
 JSON_ONLY_HINT = "必须仅输出合法 JSON 对象，不要输出任何前后文字，不要使用 markdown 围栏。"
+_MAX_REQUEST_BYTES = 48 * 1024 * 1024
 _TINY_PNG_B64 = (
     "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg=="
 )
@@ -69,6 +71,29 @@ def extract_assistant_text(message: dict[str, Any], choice: dict[str, Any] | Non
         if isinstance(legacy, str) and legacy.strip():
             return legacy.strip()
     return ""
+
+
+def _delta_text(delta: dict[str, Any]) -> str:
+    """流式增量文本：兼容 content 为字符串或分段列表的网关。"""
+    content = delta.get("content")
+    if content is None:
+        return ""
+    if isinstance(content, list):
+        parts: list[str] = []
+        for block in content:
+            if isinstance(block, dict) and block.get("text") is not None:
+                parts.append(str(block.get("text") or ""))
+            elif isinstance(block, str):
+                parts.append(block)
+        return "".join(parts)
+    return str(content)
+
+
+def _response_has_content(data: dict[str, Any]) -> bool:
+    choices = data.get("choices") or []
+    if not choices or not isinstance(choices[0], dict):
+        return False
+    return bool(extract_assistant_text(choices[0].get("message") or {}, choices[0]))
 
 
 def empty_content_hint(message: dict[str, Any], choice: dict[str, Any]) -> str:
@@ -129,9 +154,13 @@ class DeepSeekClient:
         model: str | None = None,
         max_tokens: int | None = None,
         profile: DeepSeekTaskProfile | str | None = None,
+        on_delta: Callable[[int], None] | None = None,
     ) -> str:
+        """on_delta：流式接收时按「已接收累计字符数」回调（用于真实进度条）。"""
         prof = get_profile(profile or FORMAT_REPAIR)
-        result = self._complete_text(messages, profile=prof, max_tokens=max_tokens)
+        result = self._complete_text(
+            messages, profile=prof, max_tokens=max_tokens, on_delta=on_delta
+        )
         return result.markdown
 
     def chat_json(
@@ -154,7 +183,9 @@ class DeepSeekClient:
         detail: str | None = None,
         cache_file: Path | None = None,
         prefer_files: bool | None = None,
+        on_delta: Callable[[int], None] | None = None,
     ) -> TranscribeResult:
+        """on_delta：流式接收时按「已接收累计字符数」回调（用于真实进度条）。"""
         prof = get_profile(profile or PDF_VISION)
         return self._vision_call(
             images,
@@ -164,6 +195,7 @@ class DeepSeekClient:
             cache_file=cache_file,
             prefer_files=prefer_files,
             as_json=False,
+            on_delta=on_delta,
         )
 
     def vision_json(
@@ -175,7 +207,13 @@ class DeepSeekClient:
         detail: str | None = None,
         cache_file: Path | None = None,
         prefer_files: bool | None = None,
+        on_delta: Callable[[int], None] | None = None,
+        salvage_truncated: bool = False,
     ) -> dict:
+        """on_delta：流式接收时按「已接收累计字符数」回调（用于真实进度条）。
+
+        salvage_truncated：响应被 max_tokens 截断时，保留可解析部分并打 _salvaged 标记。
+        """
         prof = get_profile(profile or DAILY_VISION)
         result = self._vision_call(
             images,
@@ -185,8 +223,20 @@ class DeepSeekClient:
             cache_file=cache_file,
             prefer_files=prefer_files,
             as_json=True,
+            on_delta=on_delta,
         )
-        return self._parse_json_text(result.markdown)
+        text = result.markdown
+        try:
+            return self._parse_json_text(text)
+        except InvalidJsonError:
+            if not salvage_truncated:
+                raise
+            salvaged = repair_truncated_json(text)
+            if salvaged is None:
+                raise
+            self._log("[api] 响应被截断：已按可解析部分继续（结果可能不完整）")
+            salvaged["_salvaged"] = True
+            return salvaged
 
     def transcribe(
         self,
@@ -249,12 +299,13 @@ class DeepSeekClient:
         profile: DeepSeekTaskProfile,
         max_tokens: int | None,
         json_mode: bool = False,
+        on_delta: Callable[[int], None] | None = None,
     ) -> TranscribeResult:
         api_key = self._require_key()
         body = self._base_body(
             messages, max_tokens=max_tokens, profile=profile, json_mode=json_mode
         )
-        data = self._request_with_retry(body, api_key=api_key)
+        data = self._request_with_retry(body, api_key=api_key, on_delta=on_delta)
         return self._parse_response(data, profile=profile)
 
     def _complete_json(
@@ -292,6 +343,7 @@ class DeepSeekClient:
         cache_file: Path | None = None,
         prefer_files: bool | None = None,
         as_json: bool = False,
+        on_delta: Callable[[int], None] | None = None,
     ) -> TranscribeResult:
         api_key = self._require_key()
         detail_level = detail or self.config.detail
@@ -315,6 +367,7 @@ class DeepSeekClient:
                     profile=profile,
                     as_json=as_json,
                     semantic_retries=semantic,
+                    on_delta=on_delta,
                 )
             except VisionApiError as e:
                 msg = str(e).lower()
@@ -334,6 +387,7 @@ class DeepSeekClient:
                         profile=profile,
                         as_json=as_json,
                         semantic_retries=semantic,
+                        on_delta=on_delta,
                     )
                 if as_json and isinstance(
                     e, (EmptyContentError, InvalidJsonError, ResponseValidationError)
@@ -360,6 +414,7 @@ class DeepSeekClient:
         profile: DeepSeekTaskProfile,
         as_json: bool,
         semantic_retries: int,
+        on_delta: Callable[[int], None] | None = None,
     ) -> TranscribeResult:
         payloads = prepare_images(
             [Path(p) for p in images],
@@ -377,7 +432,7 @@ class DeepSeekClient:
             profile=profile,
             json_mode=as_json or profile.response_format == "json_object",
         )
-        data = self._request_with_retry(body, api_key=api_key)
+        data = self._request_with_retry(body, api_key=api_key, on_delta=on_delta)
         result = self._parse_response(data, profile=profile)
         result.semantic_retry_count = semantic_retries
         result.transport = "file_id" if any(p.file_id for p in payloads) else "base64"
@@ -408,14 +463,24 @@ class DeepSeekClient:
             body["response_format"] = {"type": "json_object"}
         return body
 
-    def _request_with_retry(self, body: dict[str, Any], *, api_key: str) -> dict[str, Any]:
+    def _request_with_retry(
+        self,
+        body: dict[str, Any],
+        *,
+        api_key: str,
+        on_delta: Callable[[int], None] | None = None,
+    ) -> dict[str, Any]:
         max_tries = max(1, self.config.max_retries + 1) if self.config.auto_retry else 1
         last_err: Exception | None = None
         transport_retries = 0
         for attempt in range(max_tries):
             try:
                 t0 = time.perf_counter()
-                data = self._post_json(body, api_key=api_key)
+                data = self._post_json(body, api_key=api_key, on_delta=on_delta)
+                if on_delta is not None and not _response_has_content(data):
+                    # 网关声称流式却没吐内容：退回非流式，保证业务不因进度功能失败
+                    self._log("[api] 流式响应无内容，回退非流式重试…")
+                    data = self._post_json(body, api_key=api_key)
                 latency = int((time.perf_counter() - t0) * 1000)
                 data["_latency_ms"] = latency
                 self.last_transport_retries = transport_retries
@@ -430,19 +495,34 @@ class DeepSeekClient:
                 time.sleep(delay)
         raise last_err or NetworkError("API 请求失败")
 
-    def _post_json(self, body: dict[str, Any], *, api_key: str) -> dict[str, Any]:
-        payload = json.dumps(body, ensure_ascii=False).encode("utf-8")
-        if len(payload) > 48 * 1024 * 1024:
+    def _post_json(
+        self,
+        body: dict[str, Any],
+        *,
+        api_key: str,
+        on_delta: Callable[[int], None] | None = None,
+    ) -> dict[str, Any]:
+        """on_delta 非空时改为 SSE 流式请求，按真实接收字数回调。"""
+        stream = on_delta is not None
+        request_body = dict(body)
+        if stream:
+            request_body["stream"] = True
+        payload = json.dumps(request_body, ensure_ascii=False).encode("utf-8")
+        if len(payload) > _MAX_REQUEST_BYTES:
             raise RequestTooLargeError("请求体超过 48 MiB 限制")
         headers = {
             "Authorization": f"Bearer {api_key}",
             "Content-Type": "application/json",
         }
+        if stream:
+            headers["Accept"] = "text/event-stream"
         last_err: DeepSeekApiError | None = None
         for url in self.config.chat_completion_urls():
             req = urllib.request.Request(url, data=payload, method="POST", headers=headers)
             try:
                 with urllib.request.urlopen(req, timeout=self.config.timeout_s) as resp:
+                    if on_delta is not None:
+                        return self._read_stream_response(resp, on_delta=on_delta)
                     raw = resp.read().decode("utf-8", errors="replace")
                 try:
                     return json.loads(raw)
@@ -455,7 +535,7 @@ class DeepSeekClient:
                     if self.config.compatibility_mode:
                         self._log("[api] 兼容模式：网关不接受 thinking，去掉后重试")
                         slim = {k: v for k, v in body.items() if k != "thinking"}
-                        return self._post_json(slim, api_key=api_key)
+                        return self._post_json(slim, api_key=api_key, on_delta=on_delta)
                     raise ModelError(
                         "当前网关不接受 thinking 参数。官方 DeepSeek API 需显式 thinking=disabled；"
                         "若使用第三方兼容网关，请在设置中打开「兼容第三方网关」。"
@@ -468,6 +548,80 @@ class DeepSeekClient:
             except urllib.error.URLError as e:
                 raise NetworkError(str(e)) from e
         raise last_err or NetworkError("API 请求失败")
+
+    def _read_stream_response(
+        self,
+        resp: Any,
+        *,
+        on_delta: Callable[[int], None],
+    ) -> dict[str, Any]:
+        """读取 SSE 流：逐块累计 content 并回调，返回与非流式一致的结构。"""
+        ctype = ""
+        try:
+            ctype = str(resp.headers.get("Content-Type") or "").lower()
+        except Exception:
+            ctype = ""
+        if "event-stream" not in ctype:
+            # 网关忽略 stream=true：整体当普通 JSON 响应处理
+            raw = resp.read().decode("utf-8", errors="replace")
+            self._log("[api] 网关未返回 SSE，按整体 JSON 响应处理")
+            try:
+                return json.loads(raw)
+            except json.JSONDecodeError as e:
+                raise ResponseValidationError(f"响应非 JSON: {raw[:200]}") from e
+
+        parts: list[str] = []
+        received = 0
+        finish_reason = ""
+        usage: dict[str, Any] = {}
+        error: Any = None
+        for raw_line in resp:
+            line = raw_line.decode("utf-8", errors="replace").strip()
+            if not line or line.startswith(":"):
+                continue
+            if line.startswith("event:"):
+                continue
+            if line.startswith("data:"):
+                line = line[5:].strip()
+            if not line:
+                continue
+            if line == "[DONE]":
+                break
+            try:
+                chunk = json.loads(line)
+            except json.JSONDecodeError:
+                continue
+            if not isinstance(chunk, dict):
+                continue
+            if chunk.get("error"):
+                error = chunk["error"]
+                break
+            if chunk.get("usage"):
+                usage = chunk["usage"]
+            for choice in chunk.get("choices") or []:
+                if not isinstance(choice, dict):
+                    continue
+                delta = choice.get("delta") or {}
+                text = _delta_text(delta)
+                if text:
+                    parts.append(text)
+                    received += len(text)
+                    on_delta(received)
+                if choice.get("finish_reason"):
+                    finish_reason = str(choice["finish_reason"])
+        if error is not None:
+            return {"error": error}
+        return {
+            "choices": [
+                {
+                    "index": 0,
+                    "finish_reason": finish_reason or "stop",
+                    "message": {"role": "assistant", "content": "".join(parts)},
+                }
+            ],
+            "usage": usage,
+            "_streamed": True,
+        }
 
     def _parse_response(
         self,

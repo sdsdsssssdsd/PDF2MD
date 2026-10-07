@@ -143,6 +143,7 @@ def _assign_figure_paths(
     fig_num_paths: dict[int, Path],
     fig_nums_by_marker: dict[str, int],
     images_dir: Path,
+    figures_json_dir: Path | None = None,
     pdf_stem: str,
     log: LogFn | None,
 ) -> int:
@@ -187,7 +188,8 @@ def _assign_figure_paths(
                     log(f"Figure {rec.marker}：按 Docling 导出顺序兜底")
 
     filled = 0
-    all_figs_list = load_figures_json(images_dir.parent) or list(figures)
+    manifest_dir = figures_json_dir or images_dir.parent
+    all_figs_list = load_figures_json(manifest_dir) or list(figures)
     all_figs = {f.marker: f for f in all_figs_list}
     global_order = 0
     for rec, src in zip(pending, targets):
@@ -208,7 +210,7 @@ def _assign_figure_paths(
         rec.file = fname
         rec.status = "done"
         filled += 1
-    save_figures_json(images_dir.parent, list(all_figs.values()))
+    save_figures_json(manifest_dir, list(all_figs.values()))
     return filled
 
 
@@ -220,8 +222,14 @@ def auto_fill_figures_from_docling(
     image_path_mode: str = "relative",
     images_scale: float = 2.0,
     log: LogFn | None = None,
+    images_dir: Path | None = None,
 ) -> int:
-    """对 FIGURE 占位符：Docling 出图 → 写入 output_dir/images/ → 按 Figure 序号/页码匹配。"""
+    """对 FIGURE 占位符：Docling 出图 → 写入 images_dir/ → 按 Figure 序号/页码匹配。
+
+    output_dir 始终是**工作目录**（批次 / manifest / figures.json 所在处）；
+    images_dir 缺省为 <output_dir>/images，扁平保存时可能是
+    <导出目录>/<PDF名>.images/。
+    """
     if not figures:
         return 0
 
@@ -229,7 +237,7 @@ def auto_fill_figures_from_docling(
         if log:
             log(msg)
 
-    images_dir = output_dir / "images"
+    images_dir = Path(images_dir) if images_dir else output_dir / "images"
     images_dir.mkdir(parents=True, exist_ok=True)
     export_dir = vision_dir(output_dir) / "docling_export"
     export_dir.mkdir(parents=True, exist_ok=True)
@@ -306,8 +314,9 @@ def auto_fill_figures_from_docling(
         fig_num_paths=fig_num_paths,
         fig_nums_by_marker=fig_nums_by_marker,
         images_dir=images_dir,
+        figures_json_dir=output_dir,
         pdf_stem=pdf_path.stem,
         log=log,
     )
-    emit(f"Figure：Docling 自动写入 {filled}/{len(figures)} 张 → images/")
+    emit(f"Figure：Docling 自动写入 {filled}/{len(figures)} 张 → {images_dir}")
     return filled

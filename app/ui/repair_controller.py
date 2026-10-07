@@ -33,6 +33,7 @@ class RepairController(QObject):
     view_state_changed = Signal(object)
     finished_result = Signal(object)
     failed = Signal(str)
+    progress = Signal(str, object)  # 阶段文本, 百分比
     batch_finished = Signal()
 
     def __init__(self, parent=None, *, worker_factory: WorkerFactory | None = None) -> None:
@@ -45,6 +46,10 @@ class RepairController(QObject):
     @property
     def inputs_snapshot(self) -> RepairUiInputs | None:
         return self._inputs_snapshot
+
+    @property
+    def cancelled(self) -> bool:
+        return self._cancelled
 
     def is_running(self) -> bool:
         worker = self._worker
@@ -70,6 +75,9 @@ class RepairController(QObject):
         self._worker = worker
         worker.finished_result.connect(self._on_result)
         worker.failed.connect(self._on_failed)
+        worker_progress = getattr(worker, "progress", None)
+        if worker_progress is not None and hasattr(worker_progress, "connect"):
+            worker_progress.connect(self.progress.emit)
         worker.finished.connect(self._on_worker_finished)
         self._emit_state(
             RepairViewState(running=True, message="正在修正格式…", result_status=None)

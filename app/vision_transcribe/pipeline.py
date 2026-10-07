@@ -64,14 +64,37 @@ class VisionPipeline:
         *,
         app_root: Path | None = None,
         log: LogFn | None = None,
+        result_dir: Path | None = None,
+        images_name: str = "images",
     ) -> None:
         self.pdf_path = Path(pdf_path)
+        # output_dir = 工作目录（渲染页 / 批次 / manifest）；
+        # result_dir = 结果目录（<PDF名>.md + 图片）。默认同一处（PDF 旁 / 导出目录子文件夹）。
         self.output_dir = Path(output_dir)
+        self.result_dir = Path(result_dir) if result_dir else self.output_dir
+        self.images_name = (images_name or "images").strip() or "images"
+        self._result_dir_given = result_dir is not None
+        self._images_name_given = bool(images_name)
         self.config = config or VisionConfig()
         self.app_root = app_root or Path(__file__).resolve().parents[2]
         self._log = log or (lambda _m: None)
         self.manifest: VisionManifest | None = load_manifest(self.output_dir)
+        self._adopt_manifest_layout()
         self._adapter: VisionWebAdapter | None = None
+
+    def _adopt_manifest_layout(self) -> None:
+        """沿用 manifest 里记录的落盘布局（断点续跑 / 仅重合并裁图时不再传参）。"""
+        m = self.manifest
+        if m is None:
+            return
+        if not self._result_dir_given and str(m.result_dir or "").strip():
+            self.result_dir = Path(str(m.result_dir))
+        if not self._images_name_given and str(m.images_name or "").strip():
+            self.images_name = str(m.images_name)
+
+    @property
+    def images_dir(self) -> Path:
+        return self.result_dir / self.images_name
 
     def _stamp_backend(self, m: VisionManifest) -> None:
         backend = self.config.effective_backend()
@@ -96,17 +119,26 @@ class VisionPipeline:
 
     # —— 准备 ——
     def prepare(self, *, progress: ProgressFn | None = None, cancelled=None) -> VisionManifest:
+        m = self.manifest or VisionManifest()
+        self._adopt_manifest_layout()  # 显式传参优先；否则沿用已有 manifest 的落盘布局
+
         self.output_dir.mkdir(parents=True, exist_ok=True)
         (self.output_dir / "bookfigures").mkdir(exist_ok=True)
-        (self.output_dir / "images").mkdir(exist_ok=True)
+        self.result_dir.mkdir(parents=True, exist_ok=True)
+        self.images_dir.mkdir(parents=True, exist_ok=True)
         vision_dir(self.output_dir).mkdir(exist_ok=True)
 
-        m = self.manifest or VisionManifest()
         m.pdf = self.pdf_path.name
+        try:
+            m.pdf_path = str(self.pdf_path.resolve())
+        except OSError:
+            m.pdf_path = str(self.pdf_path)
         m.render_scale = self.config.render_scale
         m.batch_size = self.config.effective_batch_size()
         m.prompt_version = PROMPT_VERSION
         m.browser_mode = self.config.browser_mode
+        m.result_dir = str(self.result_dir)
+        m.images_name = self.images_name
         self._stamp_backend(m)
         m.state = PipelineState.RENDERING.value
         save_manifest(self.output_dir, m)
@@ -211,10 +243,18 @@ class VisionPipeline:
             ):
                 keep_n += 1
                 continue
+            if st == BatchStatus.FAILED.value and raw:
+                # 校验规则修复后，已有 raw 可能已合格，避免再烧一轮 API
+                if self.ingest_and_validate(bid, raw):
+                    keep_n += 1
+                    continue
+                b["status"] = BatchStatus.PENDING.value
+                b["error"] = ""
+                reset_n += 1
+                continue
             if st in (
                 BatchStatus.WAITING_RESPONSE.value,
                 BatchStatus.UPLOADING.value,
-                BatchStatus.FAILED.value,
             ):
                 b["status"] = BatchStatus.PENDING.value
                 b["error"] = ""
@@ -749,7 +789,7 @@ class VisionPipeline:
 
         figures = parse_figure_markers(cleaned_path.read_text(encoding="utf-8"))
         existing = {f.marker: f for f in load_figures_json(self.output_dir)}
-        images_dir = self.output_dir / "images"
+        images_dir = self.images_dir
         merged_figs: list[FigureRecord] = []
         for f in figures:
             if f.marker in existing and existing[f.marker].status == "done":
@@ -800,6 +840,7 @@ class VisionPipeline:
             image_path_mode=mode,
             images_scale=float(self.config.images_scale),
             log=self._log,
+            images_dir=self.images_dir,
         )
         m = self._ensure_manifest()
         if n > 0:
@@ -827,7 +868,8 @@ class VisionPipeline:
 
         fig_labels = figure_numbers_by_marker(md)
         name = (stem or self.pdf_path.stem) + ".md"
-        final_path = self.output_dir / name
+        self.result_dir.mkdir(parents=True, exist_ok=True)
+        final_path = self.result_dir / name
         mode = self.config.image_path_mode
         if mode not in ("relative", "absolute"):
             mode = "relative"
@@ -836,6 +878,7 @@ class VisionPipeline:
             figs,
             md_path=final_path,
             output_dir=self.output_dir,
+            images_dir=self.images_dir,
             image_path_mode=mode,
             figure_labels=fig_labels,
         )
@@ -871,7 +914,7 @@ class VisionPipeline:
                 f"请检查 {cleaned}"
             )
         name = (stem or self.pdf_path.stem) + ".md"
-        final_path = self.output_dir / name
+        final_path = self.result_dir / name
         final_path.write_text(md, encoding="utf-8")
         m.state = PipelineState.DONE.value
         save_manifest(self.output_dir, m)
