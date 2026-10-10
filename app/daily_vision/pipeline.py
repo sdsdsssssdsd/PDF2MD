@@ -45,6 +45,7 @@ class DailyVisionPipeline:
         *,
         progress: ProgressFn | None = None,
         cancelled: Callable[[], bool] | None = None,
+        on_partial: Callable[[DailyVisionResult, int], None] | None = None,
     ) -> DailyVisionResult:
         emit = progress or (lambda _text, _percent: None)
         is_cancelled = cancelled or (lambda: False)
@@ -90,6 +91,9 @@ class DailyVisionPipeline:
             merged.warnings.extend(batch_result.warnings)
             done += len(batch)
             emit(f"已完成 {done}/{total} 张", int(MODEL_PERCENT * done / total))
+            if on_partial is not None:
+                # 陆续加图时让正文一批一批长出来（传的是本轮累计结果，不含更早的会话）
+                on_partial(merged, done)
 
         if not merged.markdown.strip():
             reason = (

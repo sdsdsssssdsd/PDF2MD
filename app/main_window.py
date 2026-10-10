@@ -4,7 +4,7 @@ from __future__ import annotations
 import os
 from pathlib import Path
 
-from PySide6.QtCore import Qt, QUrl
+from PySide6.QtCore import Qt, QTimer, QUrl
 from PySide6.QtGui import QAction, QDesktopServices, QGuiApplication, QKeySequence
 from PySide6.QtWidgets import (
     QAbstractItemView,
@@ -83,7 +83,7 @@ from app.ui.widgets.command_bar import CommandBar
 from app.ui.widgets.section_card import SectionCard
 from app.ui.widgets.segmented import SegmentedControl
 from app.ui.widgets.status_badge import StatusBadge
-from app.ui.widgets.daily_vision_workspace import DailyVisionWorkspace
+from app.ui.widgets.daily_vision_workspace import DailyVisionWorkspace, is_pasted_image
 from app.ui.widgets.format_repair_workspace import FormatRepairWorkspace
 from app.ui.widgets.workflow_picker import WorkflowPicker
 from app.utils.logger import add_listener, get_logger, remove_listener
@@ -131,7 +131,19 @@ class MainWindow(QMainWindow):
         self._total_count = 0
 
         self._vision_run_active = False
-        self._daily_session = None
+        # 日常识图「陆续加图」会话：队列在工作区里，这里只存累加结果与编排状态
+        self._daily_state: dict | None = None  # 会话快照（images/done/markdown/regions）
+        self._daily_run_images: list[Path] = []  # 正在识别的这一轮图片
+        self._daily_run_base = 0  # 本轮开始前已识别张数
+        self._daily_chain = False  # 连续收图：允许自动接着识别新到的图片
+        self._daily_drain = False  # 结束会话后最多再兜一次队列
+        self._daily_archive_wanted = False  # 队列收尾后归档整个会话
+        self._daily_inflight = False  # 已派发但还没收到完成回调（防重复派发）
+        self._daily_last_percent = 0
+        self._daily_debounce = QTimer(self)
+        self._daily_debounce.setSingleShot(True)
+        self._daily_debounce.setInterval(800)
+        self._daily_debounce.timeout.connect(self._start_daily_pending)
 
         self._build_ui()
         self._bind_conversion_controller()
@@ -210,6 +222,10 @@ class MainWindow(QMainWindow):
         self.workspace_stack = QStackedWidget()
         self.daily_workspace = DailyVisionWorkspace()
         self.daily_workspace.request_recognize.connect(self._on_daily_recognize)
+        self.daily_workspace.images_added.connect(self._on_daily_images_added)
+        self.daily_workspace.request_finish.connect(self._on_daily_finish_request)
+        self.daily_workspace.session_cleared.connect(self._on_daily_session_cleared)
+        self.daily_workspace.stream_mode_changed.connect(self._on_daily_stream_mode)
         self.daily_workspace.request_save_markdown.connect(self._on_daily_save_markdown)
         self.daily_workspace.request_open_output.connect(self._open_output_root)
         self.daily_workspace.request_cancel.connect(self._cancel)
@@ -288,7 +304,9 @@ class MainWindow(QMainWindow):
         daily_page = QWidget()
         daily_l = QVBoxLayout(daily_page)
         daily_l.setContentsMargins(0, 0, 0, 0)
-        daily_hint = QLabel("拖入图片后自动识别 · 结果可直接复制或图文归档")
+        daily_hint = QLabel(
+            "拖入 / Ctrl+V 加图后自动识别 · 勾选「连续收图」可一张一张陆续加，结果拼成一篇"
+        )
         daily_hint.setWordWrap(True)
         daily_hint.setProperty("role", "muted")
         daily_l.addWidget(daily_hint)
@@ -657,10 +675,37 @@ class MainWindow(QMainWindow):
         d.finished_ok.connect(self._on_daily_finished_ok)
         d.finished_archive.connect(self._on_daily_finished_archive)
         d.progress.connect(self._on_daily_progress)
+        d.session_state.connect(self._on_daily_session_state)
+        d.partial.connect(self._on_daily_partial)
 
     def _on_daily_progress(self, text: str, percent: object) -> None:
         value = percent if isinstance(percent, int) else None
+        if value is not None and self.daily_workspace.stream_mode() and self._daily_run_images:
+            # 连续收图：把「本轮 0–100」换算成整个会话的真实完成度
+            value = self._daily_session_percent(value)
         self.daily_workspace.set_progress(value, text or "")
+
+    def _daily_session_percent(self, run_percent: int) -> int:
+        """本轮完成度 → 会话完成度；分母随新图片增长，数值只前进不回退。"""
+        run_size = len(self._daily_run_images)
+        total = max(
+            len(self.daily_workspace.image_paths()),
+            self._daily_run_base + run_size,
+            1,
+        )
+        done = self._daily_run_base + run_size * max(0, min(100, run_percent)) / 100.0
+        value = max(self._daily_last_percent, int(round(100.0 * done / total)))
+        self._daily_last_percent = min(100, value)
+        return self._daily_last_percent
+
+    def _on_daily_session_state(self, payload: object) -> None:
+        if isinstance(payload, dict):
+            self._daily_state = payload
+
+    def _on_daily_partial(self, markdown: str, _done: int, _total: int) -> None:
+        """每批完成就把累积正文显示出来（陆续加图时正文一批一批长出来）。"""
+        if markdown:
+            self.daily_workspace.set_result(markdown)
 
     def _bind_repair_controller(self) -> None:
         r = self._repair
@@ -1054,6 +1099,7 @@ class MainWindow(QMainWindow):
         self.cmb_save_mode.setCurrentIndex(mode_idx if mode_idx >= 0 else 0)
         # per_folder 由保存位置派生，见 _sync_save_mode_ui
         self._sync_save_mode_ui()
+        self.daily_workspace.set_stream_mode(bool(cfg.get("daily_stream", False)))
         eng = str(cfg["engine"])
         if eng == "MinerU":
             self.rb_mineru.setChecked(True)
@@ -1187,63 +1233,250 @@ class MainWindow(QMainWindow):
             return "disable"
         return "auto"
 
+    # —— 日常识图：一次性模式 / 连续收图（陆续加图）会话 ——
     def _on_daily_recognize(self, paths: list, archive: bool) -> None:
-        from app.vision_api.key_store import api_key_configured
-
-        if self._daily.is_running():
+        streaming = self.daily_workspace.stream_mode()
+        if not self._daily_api_ready(archive):
+            return
+        if archive:
+            self._daily_archive_wanted = True
+        if streaming:
+            self._daily_chain = True
+            if self._daily_inflight or self._daily.is_running():
+                # 正在识别：新图片留在队列里，本轮结束后自动接着跑
+                self.daily_workspace.set_status(self._daily_queue_hint())
+                return
+            self._start_daily_pending()
+            return
+        # 一次性模式：本次选择就是要识别的全部内容，结果整体替换
+        if self._daily_inflight or self._daily.is_running():
             return
         if not paths:
             return
+        self._daily_state = None
+        self._daily_last_percent = 0
+        self._daily_chain = False
+        self._daily_drain = False
+        self._daily_run_images = [Path(p) for p in paths]
+        self._daily_run_base = 0
+        self._start_daily_run(self._daily_run_images, archive=archive)
+
+    def _on_daily_images_added(self, _paths: list) -> None:
+        """连续收图：图片一进来就（防抖后）自动接着识别，不用再点一次。"""
+        if not self.daily_workspace.stream_mode():
+            return
+        self._daily_chain = True
+        if self._daily_inflight or self._daily.is_running():
+            self.daily_workspace.set_status(self._daily_queue_hint())
+            return
+        self._daily_debounce.start()
+
+    def _on_daily_stream_mode(self, enabled: bool) -> None:
+        if not self.daily_workspace.image_paths():
+            return  # 启动时恢复设置，不必打扰用户
+        if enabled:
+            self.daily_workspace.set_status(
+                "连续收图已开：拖入或 Ctrl+V 陆续加图，识别中也能继续加"
+            )
+        else:
+            self.daily_workspace.set_status("连续收图已关：每次选择/粘贴单独识别一次")
+
+    def _on_daily_finish_request(self) -> None:
+        """用户点「结束会话」：把队列里已有的识别完就收工。"""
+        self._daily_debounce.stop()
+        self._daily_chain = False
+        if self._daily.is_running():
+            self._daily_drain = True
+            self.daily_workspace.set_status("结束中…识别完这一批就不再等新图片")
+            return
+        if self.daily_workspace.pending_paths():
+            self._daily_drain = True
+            self._start_daily_pending()
+            return
+        self.daily_workspace.set_status(self._daily_summary_text())
+
+    def _daily_api_ready(self, archive: bool) -> bool:
+        from app.vision_api.key_store import api_key_configured
+
         if not api_key_configured():
             QMessageBox.warning(
                 self,
                 "API Key",
                 "请先在「设置 → DeepSeek API」配置 API Key，或设置环境变量 DEEPSEEK_API_KEY。",
             )
-            return
-        out_text = self.output_edit.text().strip()
-        if archive and not out_text:
+            return False
+        if archive and not self.output_edit.text().strip():
             QMessageBox.warning(self, "导出目录", "图文归档需要先指定导出目录。")
-            return
+            return False
+        return True
+
+    def _daily_session_payload(self) -> dict:
+        """会话快照 + 当前队列（图片始终以工作区为准，保证新加的图片不会漏）。"""
+        payload = dict(self._daily_state or {})
+        payload["images"] = [str(p) for p in self.daily_workspace.image_paths()]
+        return payload
+
+    def _start_daily_pending(self) -> bool:
+        """识别队列里还没成功的图片（连续收图时自动续跑也走这里）。"""
+        self._daily_debounce.stop()
+        if self._daily_inflight or self._daily.is_running():
+            # 已有一轮在路上：等它的完成回调来续跑，避免同一张图被派发两次
+            return False
+        pending = [
+            p
+            for p in self.daily_workspace.pending_paths()
+            if p not in self.daily_workspace.failed_paths()
+        ]
+        if not pending:
+            return self._after_daily_queue_empty()
+        payload = self._daily_session_payload()
+        done = len(payload.get("done") or [])
+        self._daily_run_images = pending
+        self._daily_run_base = done
+        if self._daily_state is None:
+            self._daily_last_percent = 0
+        return self._start_daily_run(pending, archive=False, session=payload)
+
+    def _start_daily_run(
+        self,
+        images: list[Path],
+        *,
+        archive: bool,
+        session: dict | None = None,
+    ) -> bool:
         archive_dir = None
         if archive:
-            out_root = Path(out_text)
+            out_root = Path(self.output_edit.text().strip())
             out_root.mkdir(parents=True, exist_ok=True)
-            label = Path(paths[0]).stem if paths else "截图"
+            # 只归档时 images 为空，退回用整个会话的图片起名
+            label = self._daily_archive_label(images or self.daily_workspace.image_paths())
             archive_dir = daily_archive_dir(out_root, label)
-
-        self.daily_workspace.set_busy(True)
-        self.daily_workspace.set_status("识别中…")
+        if not self.daily_workspace.is_busy():
+            # 续跑不重置进度条：整个会话的条只前进一次
+            self.daily_workspace.set_busy(True)
+        self.daily_workspace.set_status(
+            f"识别中…（本轮 {len(images)} 张）" if images else "归档中…"
+        )
         ok = self._daily.start(
             DailyVisionUiInputs(
-                image_paths=tuple(Path(p) for p in paths),
+                image_paths=tuple(Path(p) for p in images),
                 archive=archive,
                 archive_dir=archive_dir,
+                session=session,
             )
         )
+        self._daily_inflight = bool(ok)
         if not ok:
             self.daily_workspace.set_busy(False)
+            if not images and not self._daily.is_running():
+                self.daily_workspace.set_status("没有可归档的内容")
+        return ok
+
+    def _daily_archive_label(self, images: list[Path]) -> str:
+        """归档目录名：粘贴进来的临时图不算名字，退回「截图」。"""
+        for path in images:
+            if not is_pasted_image(path):
+                return Path(path).stem
+        return "截图"
+
+    def _on_daily_session_cleared(self) -> None:
+        """清空队列 = 开始新会话，累加状态一起归零。"""
+        self._daily_debounce.stop()
+        self._daily_state = None
+        self._daily_run_images = []
+        self._daily_run_base = 0
+        self._daily_chain = False
+        self._daily_drain = False
+        self._daily_archive_wanted = False
+        self._daily_inflight = False
+        self._daily_last_percent = 0
+
+    def _after_daily_queue_empty(self) -> bool:
+        """队列跑空后的收尾：要归档就归档，否则收工并报一句结果。"""
+        if self._daily_archive_wanted and self.daily_workspace.image_paths():
+            self._daily_archive_wanted = False
+            self._daily_debounce.stop()
+            return self._start_daily_run(
+                [], archive=True, session=self._daily_session_payload()
+            )
+        self.daily_workspace.set_busy(False)
+        self.daily_workspace.set_status(self._daily_summary_text())
+        return False
+
+    def _daily_queue_hint(self) -> str:
+        done, pending, failed = self.daily_workspace.queue_counts()
+        text = f"识别中…（已识别 {done} 张 · 队列 {pending} 张"
+        if failed:
+            text += f" · 失败 {failed} 张"
+        return text + "，新图片会自动接着识别）"
+
+    def _daily_summary_text(self) -> str:
+        done, pending, failed = self.daily_workspace.queue_counts()
+        if not done and not pending and not failed:
+            return "尚未添加图片 · 支持 Ctrl+V 粘贴或拖入"
+        parts = [f"已识别 {done} 张"]
+        if failed:
+            parts.append(f"失败 {failed} 张（可点「重新识别」）")
+        if pending:
+            parts.append(f"队列还剩 {pending} 张")
+        return " · ".join(parts)
 
     def _on_daily_finished_ok(self, md: str, err: str, warning: str = "") -> None:
         cancelled = self._daily.cancelled
-        self.daily_workspace.set_busy(False)
+        run_images = list(self._daily_run_images)
+        self._daily_inflight = False
         if err:
+            self.daily_workspace.set_busy(False)
+            self._daily_chain = False
+            self._daily_drain = False
             if cancelled:
-                self.daily_workspace.set_status("已取消")
+                self.daily_workspace.set_status(
+                    f"已取消 · {self._daily_summary_text()}（已识别的部分保留）"
+                )
                 return
-            self.daily_workspace.set_status(f"失败：{err}")
+            self.daily_workspace.mark_failed(run_images)
+            # 失败不自动重试，否则会对着同一批图片空转
+            self.daily_workspace.set_status(f"失败：{err}（其余结果保留，可点「重新识别」）")
             QMessageBox.warning(self, "日常识图", err)
             return
-        self.daily_workspace.set_result(md)
-        if warning:
-            self.daily_workspace.set_status(f"识别完成（{warning}）· 可直接复制")
-        else:
-            self.daily_workspace.set_status("识别完成 · 可直接复制")
+        if md:
+            self.daily_workspace.set_result(md)
+        self.daily_workspace.mark_done(run_images)
+        self._daily_last_percent = max(
+            self._daily_last_percent, self._daily_session_percent(100)
+        )
+        if not self.daily_workspace.stream_mode():
+            self.daily_workspace.set_busy(False)
+            if warning:
+                self.daily_workspace.set_status(f"识别完成（{warning}）· 可直接复制")
+            else:
+                self.daily_workspace.set_status("识别完成 · 可直接复制")
+            return
+        pending = [
+            p
+            for p in self.daily_workspace.pending_paths()
+            if p not in self.daily_workspace.failed_paths()
+        ]
+        if pending and (self._daily_chain or self._daily_drain):
+            if not self._daily_chain:
+                self._daily_drain = False  # 结束会话：最多再兜一次
+            self._start_daily_pending()  # 保持忙碌状态直接续跑，进度条不回退
+            return
+        if self._daily_archive_wanted and self.daily_workspace.image_paths():
+            self._daily_archive_wanted = False
+            self._start_daily_run(
+                [], archive=True, session=self._daily_session_payload()
+            )
+            return
+        self.daily_workspace.set_busy(False)
+        text = self._daily_summary_text()
+        self.daily_workspace.set_status(f"{text}（{warning}）" if warning else text)
 
     def _on_daily_finished_archive(
         self, md_path: str, err: str, warning: str = ""
     ) -> None:
         cancelled = self._daily.cancelled
+        self._daily_inflight = False
         self.daily_workspace.set_busy(False)
         if err:
             if cancelled:
@@ -1257,6 +1490,13 @@ class MainWindow(QMainWindow):
             self.daily_workspace.set_result(text)
         except Exception:
             pass
+        done_paths = [
+            Path(p) for p in (self._daily_state or {}).get("done") or [] if str(p)
+        ]
+        # 只把真正识别过的标成已完成；没识别的（比如中途失败）留在队列里
+        self.daily_workspace.mark_done(
+            done_paths or list(self.daily_workspace.image_paths())
+        )
         if warning:
             self.daily_workspace.set_status(f"已归档：{md_path}（{warning}）")
         else:
@@ -1707,7 +1947,12 @@ class MainWindow(QMainWindow):
             return
         if self._daily.is_running():
             self._daily.cancel()
-            self.daily_workspace.set_status("正在取消…（当前批次结束后停止）")
+            # 取消＝立刻停：不再自动续跑，也不再兜队列/归档
+            self._daily_chain = False
+            self._daily_drain = False
+            self._daily_archive_wanted = False
+            self._daily_debounce.stop()
+            self.daily_workspace.set_status("正在取消…（当前批次结束后停止，已识别的部分保留）")
             return
         if self._repair.is_running():
             self._repair.cancel()
@@ -2149,6 +2394,7 @@ class MainWindow(QMainWindow):
         s.setValue("keep_refs", self.cb_refs.isChecked())
         s.setValue("images_scale", self._images_scale())
         s.setValue("image_path_mode", self._image_path_mode())
+        s.setValue("daily_stream", self.daily_workspace.stream_mode())
         # Phase 5I：GUI 关闭不 terminate DeepSeek Worker（模型常驻本机 session）
         try:
             from app.ocr.deepseek_worker_client import reset_deepseek_worker_client

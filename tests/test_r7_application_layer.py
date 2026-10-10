@@ -689,12 +689,16 @@ def test_daily_worker_threads_progress_to_controller(tmp_path: Path, monkeypatch
         def __init__(self, *args, **kwargs) -> None:
             pass
 
-        def transcribe(self, paths, *, progress=None, cancelled=None) -> DailyVisionResult:
+        def transcribe(
+            self, paths, *, progress=None, cancelled=None, on_partial=None
+        ) -> DailyVisionResult:
             emit = progress or (lambda _t, _p: None)
             emit("第 1/2 批 · 已接收 800 字", 46)
             emit("已完成 6/13 张", 50)
             result = DailyVisionResult(markdown="# ok", regions=[])
             result.warnings.append("第 2/2 批失败：HTTP 500")
+            if on_partial is not None:
+                on_partial(result, len(paths))
             return result
 
     monkeypatch.setattr(daily_service, "DailyVisionPipeline", StubPipeline)

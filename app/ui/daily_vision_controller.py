@@ -17,6 +17,7 @@ class DailyVisionUiInputs:
     image_paths: tuple[Path, ...]
     archive: bool = False
     archive_dir: Path | None = None
+    session: dict[str, Any] | None = None  # 会话快照：None = 单次识别，不累加
 
 
 @dataclass(frozen=True)
@@ -31,6 +32,8 @@ class DailyVisionController(QObject):
     view_state_changed = Signal(object)
     finished_ok = Signal(str, str, str)  # markdown, error, warning
     finished_archive = Signal(str, str, str)  # md_path, error, warning
+    session_state = Signal(object)  # 会话快照：累积正文 + 图片队列 + 裁图区域
+    partial = Signal(str, int, int)  # 陆续加图：每批完成后的累积正文
     log_line = Signal(str)
     progress = Signal(str, object)  # 阶段文本, 百分比
     batch_finished = Signal()
@@ -61,24 +64,34 @@ class DailyVisionController(QObject):
         if self.is_running():
             return False
         paths = [Path(p) for p in inputs.image_paths]
-        if not paths:
+        session = inputs.session if isinstance(inputs.session, dict) else None
+        if not paths and not (session and session.get("images")):
+            # 既没有新图片、也没有可归档的会话：不启动空跑
             return False
         self._inputs_snapshot = DailyVisionUiInputs(
             image_paths=tuple(paths),
             archive=bool(inputs.archive),
             archive_dir=Path(inputs.archive_dir) if inputs.archive_dir else None,
+            session=session,
         )
         self._cancelled = False
         worker = self._worker_factory(
             paths,
             archive=bool(inputs.archive),
             archive_dir=Path(inputs.archive_dir) if inputs.archive_dir else None,
+            session=session,
             parent=self,
         )
         self._worker = worker
         worker.finished_ok.connect(self._on_ok)
         worker.finished_archive.connect(self._on_archive)
         worker.log_line.connect(self.log_line.emit)
+        worker_session = getattr(worker, "session_state", None)
+        if worker_session is not None and hasattr(worker_session, "connect"):
+            worker_session.connect(self.session_state.emit)
+        worker_partial = getattr(worker, "partial", None)
+        if worker_partial is not None and hasattr(worker_partial, "connect"):
+            worker_partial.connect(self.partial.emit)
         worker_progress = getattr(worker, "progress", None)
         if worker_progress is not None and hasattr(worker_progress, "connect"):
             worker_progress.connect(self.progress.emit)
@@ -136,6 +149,12 @@ class DailyVisionController(QObject):
         )
 
     def _on_worker_finished(self) -> None:
+        # 连续收图会在上一轮 finished_ok 里立刻派发下一轮，紧接着旧 worker 的
+        # finished 才送到；这时不能把新 worker 的引用清掉（否则 UI 以为空闲，
+        # 取消/等待都会落到空处）。
+        sender = self.sender()
+        if sender is not None and sender is not self._worker:
+            return
         shown = "cancelled" if self._cancelled else None
         self._emit_state(
             DailyVisionViewState(

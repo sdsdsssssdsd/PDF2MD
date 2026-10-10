@@ -86,6 +86,7 @@ def load_defaults() -> dict:
         "images_scale": float(s.value("images_scale", 3.0)),
         "image_path_mode": s.value("image_path_mode", "relative"),
         "default_workflow": s.value("default_workflow", "daily"),
+        "daily_stream": s.value("daily_stream", False, type=bool),
     }
 
 

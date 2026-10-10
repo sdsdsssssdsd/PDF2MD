@@ -51,6 +51,15 @@ Default **save location** is a folder beside the source PDF (`paper.pdf` → `pa
 
 The main window keeps frequent options only (export images + Markdown; tables + references). Diagnostics sit behind **…**.
 
+**Feeding screenshots one at a time (日常识图).** Tick **连续收图** and you never have to pick a whole
+batch up front: drag, `Ctrl+V` or **添加图片** appends to the queue *while a batch is still running*, the
+app recognises what is queued, then picks up whatever arrived meanwhile — one merged Markdown document
+in the order you added them (markers and figure crops stay in sync). Duplicates are ignored, a failed
+batch is never retried in a loop (`重新识别` retries it explicitly), `结束会话` drains the queue and stops
+waiting, `取消识别` stops immediately and keeps what is already recognised, and `图文归档` writes the
+**whole** session (`document.md` + `sources/` + cropped `images/`) in one pass — no second API call.
+Leave the box unticked for the old keep-it-simple behaviour: one selection = one run, result replaced.
+
 ---
 
 ## Markdown contract
