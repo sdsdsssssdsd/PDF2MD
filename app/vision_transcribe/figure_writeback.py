@@ -27,7 +27,11 @@ def writeback_figures(
     check_exists = output_dir is not None or images_dir is not None
     if images_dir is None:
         images_dir = (output_dir / "images") if output_dir else Path("images")
-    md_parent = md_path.parent if md_path else Path(".")
+    # _format_url 的契约是「md 文件路径」，它内部取 .parent 作为相对基准。
+    # 曾经这里传的是目录（再被取一次 parent），链接于是多出一层目录名：
+    # 文献/[01]_Kuzilek2017_API视觉/[01]_Kuzilek2017.md 里写成
+    # [01]_Kuzilek2017_API视觉/images/x.png → 图片全部打不开。
+    md_file = Path(md_path) if md_path else Path(".")
     labels = figure_labels or {}
 
     def _repl(m: re.Match[str]) -> str:
@@ -40,7 +44,7 @@ def writeback_figures(
         fname = Path(str(rec.file).replace("\\", "/")).name
         if check_exists and not (images_dir / fname).is_file():
             return m.group(0)
-        url = _format_url(images_dir, fname, md_parent, image_path_mode)
+        url = _format_url(images_dir, fname, md_file, image_path_mode)
         alt = f"Figure {labels[key]}" if key in labels else "Figure"
         return f"![{alt}]({url})"
 
