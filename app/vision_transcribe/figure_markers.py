@@ -78,6 +78,76 @@ def strip_orphan_figure_markers_after_images(md: str) -> str:
     return "".join(out)
 
 
+_MARKER_ONLY_LINE = re.compile(r"^\s*<!--\s*PDF2MD:FIGURE:p(\d{4}):f(\d{2})\s*-->\s*$")
+
+
+def _adjacent_figure_runs(lines: list[str]) -> list[list[int]]:
+    """连续紧邻（中间只有空行）且同一页的 FIGURE 占位符行号分组；≥2 个才算一组。"""
+    runs: list[list[int]] = []
+    current: list[int] = []
+    current_page: int | None = None
+
+    def _flush() -> None:
+        nonlocal current, current_page
+        if len(current) >= 2:
+            runs.append(current)
+        current = []
+        current_page = None
+
+    for i, line in enumerate(lines):
+        m = _MARKER_ONLY_LINE.match(line)
+        if m:
+            page = int(m.group(1))
+            if current and page != current_page:
+                _flush()
+            if not current:
+                current_page = page
+            current.append(i)
+            continue
+        if not line.strip() and current:
+            continue  # 空行不打断连续段
+        _flush()
+    _flush()
+    return runs
+
+
+def collapse_adjacent_figure_markers(md: str) -> str:
+    """同一页连续紧邻的多个 FIGURE 占位符合并成一个（保留第一个）。
+
+    实测 [01]_Kuzilek2017 第 7 页：整页只有一张 Figure 5，是 a–f 六个子图，模型却连着
+    写了 6 个占位符；Docling 那一页只出 1 张图 → 3 个占位符无图可插 → 完成门判整篇失败。
+    只合并「同一页 + 彼此之间没有任何正文」的连续占位符；像该文第 3 页那样中间夹着正文的
+    两个占位符（确实是两张图）原样保留。
+    """
+    text = md or ""
+    if "PDF2MD:FIGURE" not in text:
+        return text
+    lines = text.splitlines(keepends=True)
+    drop: set[int] = set()
+    for run in _adjacent_figure_runs(lines):
+        drop.update(run[1:])
+    if not drop:
+        return text
+    return "".join(line for i, line in enumerate(lines) if i not in drop)
+
+
+def adjacent_figure_merge_notes(md: str) -> list[str]:
+    """给日志用：说明哪些页发生了「连续占位符合并」，不修改正文。"""
+    lines = (md or "").splitlines(keepends=True)
+    notes: list[str] = []
+    for run in _adjacent_figure_runs(lines):
+        first = _MARKER_ONLY_LINE.match(lines[run[0]])
+        if not first:
+            continue
+        page = int(first.group(1))
+        keep = f"p{page:04d}:f{int(first.group(2)):02d}"
+        notes.append(
+            f"第 {page} 页有 {len(run)} 个连续 FIGURE 占位符"
+            f"（多半是同一张图的 a–f 子图），按一张图处理，保留 {keep}"
+        )
+    return notes
+
+
 def count_figure_captions(md: str) -> list[int]:
     nums: list[int] = []
     for line in (md or "").splitlines():

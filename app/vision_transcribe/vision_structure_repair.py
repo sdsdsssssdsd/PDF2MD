@@ -145,9 +145,13 @@ def repair_vision_markdown_structure(md: str) -> str:
     text = md or ""
     text = repair_page_marker_breaks(text)
     text = repair_deepseek_placeholder_figures(text)
-    from app.vision_transcribe.figure_markers import repair_missing_figure_markers
+    from app.vision_transcribe.figure_markers import (
+        collapse_adjacent_figure_markers,
+        repair_missing_figure_markers,
+    )
 
     text = repair_missing_figure_markers(text)
+    text = collapse_adjacent_figure_markers(text)
     if markdown_lacks_structure(text):
         text = repair_block_breaks(text)
         text = repair_section_line_breaks(text)

@@ -164,16 +164,30 @@ def _assign_figure_paths(
                         f"第 {rec.index} 张匹配"
                     )
 
+    page_of: dict[str, int] = {}
+    for _page, _plist in (by_page or {}).items():
+        for _p in _plist:
+            page_of.setdefault(str(Path(_p).resolve()), int(_page))
+
     # 2) Docling 题注 Figure N（用 Vision 题注编号，不用列表下标）
+    #    跨页的题注图先不用：实测 [01]_Kuzilek2017 第 7 页的 Figure 5 被题注匹配到
+    #    别的页的图，插错图比少插一张更糟；先留给页内兜底，实在没有再用跨页图。
+    deferred_caption: list[tuple[int, int]] = []
     if fig_num_paths and fig_nums_by_marker:
         for i, rec in enumerate(pending):
             if targets[i] is not None:
                 continue
             n = fig_nums_by_marker.get(rec.marker)
-            if n is not None and n in fig_num_paths:
-                targets[i] = fig_num_paths[n]
-                if log:
-                    log(f"Figure {rec.marker}：按题注 Figure {n} 匹配")
+            cand = fig_num_paths.get(n) if n is not None else None
+            if cand is None:
+                continue
+            cand_page = page_of.get(str(Path(cand).resolve()))
+            if cand_page is not None and cand_page != int(rec.page):
+                deferred_caption.append((i, n))
+                continue
+            targets[i] = cand
+            if log:
+                log(f"Figure {rec.marker}：按题注 Figure {n} 匹配")
 
     # 3) 全局顺序兜底（Docling 常多一张页眉/logo，跳过首张）
     if any(t is None for t in targets) and ordered_paths:
@@ -186,6 +200,17 @@ def _assign_figure_paths(
                 targets[i] = pool[i]
                 if log:
                     log(f"Figure {rec.marker}：按 Docling 导出顺序兜底")
+
+    # 4) 仍空着的，才退回复用跨页题注图
+    for i, n in deferred_caption:
+        if targets[i] is not None:
+            continue
+        cand = fig_num_paths.get(n)
+        if cand is None:
+            continue
+        targets[i] = cand
+        if log:
+            log(f"Figure {pending[i].marker}：按题注 Figure {n} 匹配（跨页，兜底）")
 
     filled = 0
     manifest_dir = figures_json_dir or images_dir.parent

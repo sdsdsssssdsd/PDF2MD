@@ -768,6 +768,10 @@ class VisionPipeline:
 
         m.state = PipelineState.CLEANING.value
         save_manifest(self.output_dir, m)
+        from app.vision_transcribe.figure_markers import adjacent_figure_merge_notes
+
+        for _note in adjacent_figure_merge_notes(formatted_md):
+            self._log(f"Figure：{_note}")
         cleaned_path = clean_and_write(self.output_dir, formatted_md)
         try:
             from app.vision_transcribe.integrity.content_preservation import (
