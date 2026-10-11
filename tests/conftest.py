@@ -20,6 +20,42 @@ def _is_ci() -> bool:
     return bool(os.environ.get("CI") or os.environ.get("GITHUB_ACTIONS"))
 
 
+_QT_APP = None  # 会话级 QApplication 强引用：绝不能中途被 GC 掉
+
+
+@pytest.fixture(scope="session", autouse=True)
+def qt_application_session():
+    """整个测试会话共用一个 QApplication，并在退出前把 Qt 对象按序收干净。
+
+    GitHub Windows runner 上实测：建过 Qt 窗口的进程在解释器退出时会被
+    PySide6/Qt 的析构 abort（退出码 0xC0000409，pytest 明明全绿）——既有的
+    test_ui_layout_smoke 用例单独跑也会崩，说明与具体用例无关，是收尾顺序问题：
+    QApplication 的 Python 包装器没人持有引用，可能先于各窗口被回收。
+    这里显式持有、先删窗口、processEvents 让 deleteLater 生效、再 gc，最后才放手。
+    """
+    global _QT_APP
+    try:
+        from PySide6.QtWidgets import QApplication
+    except Exception:  # 未装 PySide6 的纯逻辑测试
+        yield None
+        return
+    _QT_APP = QApplication.instance() or QApplication([])
+    yield _QT_APP
+
+    import gc
+
+    for widget in list(_QT_APP.topLevelWidgets()):
+        try:
+            widget.close()
+            widget.deleteLater()
+        except Exception:
+            pass
+    _QT_APP.processEvents()
+    _QT_APP.quit()
+    _QT_APP.processEvents()
+    gc.collect()
+
+
 @pytest.fixture(autouse=True)
 def isolated_qsettings(tmp_path, monkeypatch):
     """每个测试都用独立的 QSettings 存储（临时 INI），绝不碰用户真实配置。
