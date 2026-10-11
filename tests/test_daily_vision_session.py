@@ -193,6 +193,16 @@ def _app():
     return inst if inst is not None else QApplication([])
 
 
+def test_qsettings_are_isolated_from_the_real_profile():
+    """回归：测试不能写用户真实配置（曾把「导出目录」污染成 pytest 临时目录）。"""
+    from app.dialogs.settings_dialog import settings
+
+    assert "_qsettings" in settings().fileName().replace("\\", "/")
+    settings().setValue("output_dir", "Z:/must/never/reach/the/real/profile")
+    settings().sync()
+    assert settings().value("output_dir") == "Z:/must/never/reach/the/real/profile"
+
+
 def test_workspace_stream_mode_appends_and_keeps_drop_alive(tmp_path: Path):
     _app()
     ws = DailyVisionWorkspace()

@@ -20,6 +20,37 @@ def _is_ci() -> bool:
     return bool(os.environ.get("CI") or os.environ.get("GITHUB_ACTIONS"))
 
 
+@pytest.fixture(autouse=True)
+def isolated_qsettings(tmp_path, monkeypatch):
+    """每个测试都用独立的 QSettings 存储（临时 INI），绝不碰用户真实配置。
+
+    事故教训：UI 测试里 MainWindow.closeEvent() 会把当前界面选项写回真实
+    QSettings，曾经把用户「导出目录」改成 pytest 的临时目录，导致下一次真实转换
+    把结果写进临时目录。QSettings.setDefaultFormat() 对 QSettings(org, app)
+    无效（实测仍是 NativeFormat/注册表），所以这里直接替换 settings() 工厂。
+    """
+    try:
+        from PySide6.QtCore import QSettings
+    except Exception:  # 未装 PySide6 的纯逻辑测试
+        yield
+        return
+
+    import sys
+
+    import app.dialogs.settings_dialog as settings_dialog
+
+    ini_path = tmp_path / "_qsettings.ini"
+
+    def _isolated_settings() -> "QSettings":
+        return QSettings(str(ini_path), QSettings.Format.IniFormat)
+
+    monkeypatch.setattr(settings_dialog, "settings", _isolated_settings)
+    main_window = sys.modules.get("app.main_window")
+    if main_window is not None:  # 该模块用 from ... import settings 绑定了引用
+        monkeypatch.setattr(main_window, "settings", _isolated_settings, raising=False)
+    yield
+
+
 def _has_module(name: str) -> bool:
     try:
         __import__(name)
