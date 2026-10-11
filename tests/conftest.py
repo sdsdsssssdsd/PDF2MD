@@ -2,8 +2,18 @@
 from __future__ import annotations
 
 import os
+import tempfile
+from pathlib import Path
 
 import pytest
+
+# 会话级兜底：整个 pytest 进程（含夹具收尾、GC、atexit 阶段）写设置都只落临时 INI。
+# 必要性：夹具收尾时 monkeypatch 已经还原环境变量，若此时有遗留窗口被 close()，
+# MainWindow.closeEvent 会通过 settings() 写「导出目录」——曾经就这样写进真实注册表。
+SESSION_SETTINGS_FILE = os.environ.setdefault(
+    "PDF2MD_SETTINGS_FILE",
+    str(Path(tempfile.mkdtemp(prefix="pdf2md_pytest_settings_")) / "session.ini"),
+)
 
 # GitHub Actions 无本地 PDF、DeepSeek 模板、phase4 benchmark 产物等
 _CI_SKIP_FILES = frozenset(

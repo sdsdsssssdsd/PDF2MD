@@ -193,11 +193,12 @@ def _app():
     return inst if inst is not None else QApplication([])
 
 
-def test_qsettings_are_isolated_from_the_real_profile():
+def test_qsettings_are_isolated_from_the_real_profile(tmp_path: Path):
     """回归：测试不能写用户真实配置（曾把「导出目录」污染成 pytest 临时目录）。"""
     from PySide6.QtCore import QSettings
 
     from app.dialogs.settings_dialog import settings
+    from tests.conftest import SESSION_SETTINGS_FILE
 
     store = settings()
     assert store.format() == QSettings.Format.IniFormat  # 不是注册表
@@ -205,6 +206,52 @@ def test_qsettings_are_isolated_from_the_real_profile():
     store.setValue("output_dir", "Z:/must/never/reach/the/real/profile")
     store.sync()
     assert settings().value("output_dir") == "Z:/must/never/reach/the/real/profile"
+    # 进程级兜底存在，且与单测覆盖是两个不同文件（夹具收尾后生效的就是它）
+    assert SESSION_SETTINGS_FILE.endswith(".ini")
+    assert SESSION_SETTINGS_FILE != str(tmp_path / "_qsettings.ini")
+
+
+def test_a_real_pytest_run_leaves_the_real_settings_alone():
+    """事故复现式回归：真跑一次 UI 测试（不带单测覆盖），真实注册表必须原封不动。"""
+    import os
+    import subprocess
+    import sys
+
+    from PySide6.QtCore import QSettings
+
+    repo = Path(__file__).resolve().parents[1]
+    real = QSettings("PDF2MD", "PDF2MD")
+    original = real.value("output_dir")
+    sentinel = "Z:/SENTINEL/pytest-must-not-write-this"
+    real.setValue("output_dir", sentinel)
+    real.sync()
+
+    env = {k: v for k, v in os.environ.items() if k != "PDF2MD_SETTINGS_FILE"}
+    try:
+        run = subprocess.run(
+            [
+                sys.executable,
+                "-m",
+                "pytest",
+                "tests/test_ui_layout_smoke.py::test_main_window_minimum_and_defaults",
+                "-q",
+                "-p",
+                "no:cacheprovider",
+            ],
+            cwd=str(repo),
+            env=env,
+            capture_output=True,
+            text=True,
+            timeout=600,
+        )
+        assert run.returncode == 0, run.stdout[-2000:] + run.stderr[-2000:]
+        assert QSettings("PDF2MD", "PDF2MD").value("output_dir") == sentinel
+    finally:
+        if original is None:
+            real.remove("output_dir")
+        else:
+            real.setValue("output_dir", original)
+        real.sync()
 
 
 def test_workspace_stream_mode_appends_and_keeps_drop_alive(tmp_path: Path):
