@@ -39,3 +39,5 @@ jobs:
         env:
           CI: true
           GITHUB_ACTIONS: true
+          # 测试绝不写真实用户配置（Windows 上是注册表），全部落到临时 INI
+          PDF2MD_SETTINGS_FILE: ${{ runner.temp }}/pdf2md_ci_settings.ini

@@ -1,6 +1,7 @@
 """设置对话框 + QSettings。"""
 from __future__ import annotations
 
+import os
 from pathlib import Path
 
 from PySide6.QtCore import QSettings, Qt
@@ -46,6 +47,10 @@ _NAV = ("常规", "转换", "DeepSeek API", "输出", "外观", "环境")
 
 
 def settings() -> QSettings:
+    """应用设置。可用 PDF2MD_SETTINGS_FILE 指定独立 INI（测试/CI 用，避免污染真实配置）。"""
+    override = (os.environ.get("PDF2MD_SETTINGS_FILE") or "").strip()
+    if override:
+        return QSettings(override, QSettings.Format.IniFormat)
     return QSettings(ORG, APP)
 
 

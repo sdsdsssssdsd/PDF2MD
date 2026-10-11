@@ -25,29 +25,13 @@ def isolated_qsettings(tmp_path, monkeypatch):
     """每个测试都用独立的 QSettings 存储（临时 INI），绝不碰用户真实配置。
 
     事故教训：UI 测试里 MainWindow.closeEvent() 会把当前界面选项写回真实
-    QSettings，曾经把用户「导出目录」改成 pytest 的临时目录，导致下一次真实转换
-    把结果写进临时目录。QSettings.setDefaultFormat() 对 QSettings(org, app)
-    无效（实测仍是 NativeFormat/注册表），所以这里直接替换 settings() 工厂。
+    QSettings，曾经把用户「导出目录」改成 pytest 的临时目录，下一次真实转换就把
+    结果写进了临时目录。应用侧认 PDF2MD_SETTINGS_FILE 环境变量（见
+    app/dialogs/settings_dialog.py:settings），比 monkeypatch 更彻底：
+    已经 `from ... import settings` 绑定过去、或在函数内部延迟导入的调用点同样生效。
+    （QSettings.setDefaultFormat(IniFormat) 对 QSettings(org, app) 无效，实测仍是注册表。）
     """
-    try:
-        from PySide6.QtCore import QSettings
-    except Exception:  # 未装 PySide6 的纯逻辑测试
-        yield
-        return
-
-    import sys
-
-    import app.dialogs.settings_dialog as settings_dialog
-
-    ini_path = tmp_path / "_qsettings.ini"
-
-    def _isolated_settings() -> "QSettings":
-        return QSettings(str(ini_path), QSettings.Format.IniFormat)
-
-    monkeypatch.setattr(settings_dialog, "settings", _isolated_settings)
-    main_window = sys.modules.get("app.main_window")
-    if main_window is not None:  # 该模块用 from ... import settings 绑定了引用
-        monkeypatch.setattr(main_window, "settings", _isolated_settings, raising=False)
+    monkeypatch.setenv("PDF2MD_SETTINGS_FILE", str(tmp_path / "_qsettings.ini"))
     yield
 
 

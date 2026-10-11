@@ -195,11 +195,15 @@ def _app():
 
 def test_qsettings_are_isolated_from_the_real_profile():
     """回归：测试不能写用户真实配置（曾把「导出目录」污染成 pytest 临时目录）。"""
+    from PySide6.QtCore import QSettings
+
     from app.dialogs.settings_dialog import settings
 
-    assert "_qsettings" in settings().fileName().replace("\\", "/")
-    settings().setValue("output_dir", "Z:/must/never/reach/the/real/profile")
-    settings().sync()
+    store = settings()
+    assert store.format() == QSettings.Format.IniFormat  # 不是注册表
+    assert "_qsettings.ini" in store.fileName().replace("\\", "/")
+    store.setValue("output_dir", "Z:/must/never/reach/the/real/profile")
+    store.sync()
     assert settings().value("output_dir") == "Z:/must/never/reach/the/real/profile"
 
 
