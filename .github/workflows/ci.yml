@@ -37,11 +37,15 @@ jobs:
       - name: pytest
         shell: pwsh
         run: |
-          python -m pytest -q 2>&1 | Tee-Object -FilePath pytest.log
-          if ($LASTEXITCODE -ne 0) {
+          # 不用管道：管道会让 $LASTEXITCODE 不可靠，曾把一次全绿运行误判成失败
+          python -m pytest -q *> pytest.log
+          $code = $LASTEXITCODE
+          Get-Content pytest.log -Tail 40
+          Write-Host "pytest exit code: $code"
+          if ($code -ne 0) {
             # 失败摘要写进 job annotation，公开仓库无需 token 也能读到
             $tail = (Get-Content pytest.log -Tail 80) -join '%0A'
-            Write-Host "::error title=pytest failed::$tail"
+            Write-Host "::error title=pytest failed (exit $code)::$tail"
             exit 1
           }
         env:
