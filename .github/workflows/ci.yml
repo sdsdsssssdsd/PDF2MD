@@ -35,7 +35,15 @@ jobs:
         run: python scripts/check_github_submit_privacy.py
 
       - name: pytest
-        run: python -m pytest -q
+        shell: pwsh
+        run: |
+          python -m pytest -q 2>&1 | Tee-Object -FilePath pytest.log
+          if ($LASTEXITCODE -ne 0) {
+            # 失败摘要写进 job annotation，公开仓库无需 token 也能读到
+            $tail = (Get-Content pytest.log -Tail 80) -join '%0A'
+            Write-Host "::error title=pytest failed::$tail"
+            exit 1
+          }
         env:
           CI: true
           GITHUB_ACTIONS: true
